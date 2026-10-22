@@ -1,0 +1,22 @@
+# Local build output
+/Dodger.exe
+/Dodger.exe.config
+/ChainedGuard.Native.*
+/src/build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# User data and local tools
+/settings.xml
+/logs/
+/self-test.txt
+/.vs/
+/.vscode/
+*.user
+*.suo
+*.zip
+*.7z
+*.dmp

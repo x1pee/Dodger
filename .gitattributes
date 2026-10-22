@@ -1,0 +1,11 @@
+* text=auto
+*.cs text eol=crlf
+*.cpp text eol=crlf
+*.hpp text eol=crlf
+*.h text eol=crlf
+*.c text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.md text eol=lf
+*.png binary
+*.ico binary
