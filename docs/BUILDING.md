@@ -36,7 +36,7 @@ Start-Process .\Dodger.exe -ArgumentList '--self-test' -Wait -PassThru
 Get-Content .\self-test.txt
 ```
 
-These checks do not start the game. They validate host logic and configuration, not real combat coverage. A successful compile and self-test do not establish compatibility with a new game build.
+These checks do not start the game. They validate host logic, configuration, language switching, and headless panel layout, not real combat coverage. Generated panel images and the test report are local build artifacts excluded from Git. A successful compile and self-test do not establish compatibility with a new game build.
 
 ## Architecture
 

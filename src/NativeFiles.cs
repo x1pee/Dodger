@@ -13,25 +13,25 @@ namespace ChainedGuard {
         private const int MaximumDllPathLength=259;
 
         private static string DirectoryPath(string path) {
-            if(string.IsNullOrWhiteSpace(path))throw new ArgumentException("Папка данных Dodger не указана.","dataFolder");
+            if(string.IsNullOrWhiteSpace(path))throw new ArgumentException(I18n.Text("Папка данных Dodger не указана.","The Dodger data folder was not specified."),"dataFolder");
             string full=Path.GetFullPath(path),root=Path.GetPathRoot(full);
             return full.Length>root.Length?full.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar):root;
         }
 
         private static void CheckFolderLength(string folder) {
             if(folder.Length>MaximumNativeFolderLength)
-                throw new PathTooLongException("Путь к папке модуля Dodger слишком длинный. Используй папку с путём не длиннее 170 символов, чтобы игровой журнал работал корректно.");
+                throw new PathTooLongException(I18n.Text("Путь к папке модуля Dodger слишком длинный. Используй папку с путём не длиннее 170 символов, чтобы игровой журнал работал корректно.","The Dodger module folder path is too long. Use a path of at most 170 characters so the combat log works correctly."));
         }
 
         private static void CheckDllLength(string path) {
             if(path.Length>MaximumDllPathLength)
-                throw new PathTooLongException("Путь к модулю Dodger слишком длинный. Используй путь не длиннее 259 символов.");
+                throw new PathTooLongException(I18n.Text("Путь к модулю Dodger слишком длинный. Используй путь не длиннее 259 символов.","The Dodger module path is too long. Use a path of at most 259 characters."));
         }
 
         private static string ChildPath(string folder,string name) {
             string path=Path.GetFullPath(Path.Combine(folder,name));
             if(!string.Equals(DirectoryPath(Path.GetDirectoryName(path)),folder,StringComparison.OrdinalIgnoreCase))
-                throw new IOException("Не удалось подготовить модуль внутри папки данных Dodger.");
+                throw new IOException(I18n.Text("Не удалось подготовить модуль внутри папки данных Dodger.","Could not prepare the module inside the Dodger data folder."));
             CheckDllLength(path);return path;
         }
 
@@ -44,11 +44,11 @@ namespace ChainedGuard {
             using(var file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,65536,FileOptions.SequentialScan))actual=Digest(file);
             bool equal=actual.Length==expected.Length;
             for(int i=0;equal&&i<actual.Length;i++)equal=actual[i]==expected[i];
-            if(!equal)throw new IOException("Существующая копия модуля Dodger отличается от ожидаемой. Файл сохранён без изменений: "+path);
+            if(!equal)throw new IOException(I18n.Text("Существующая копия модуля Dodger отличается от ожидаемой. Файл сохранён без изменений: ","The existing Dodger module does not match the expected file. It was left unchanged: ")+path);
         }
 
         internal static string Prepare(string source,string dataFolder,bool useFallback) {
-            if(string.IsNullOrWhiteSpace(source))throw new ArgumentException("Путь к ChainedGuard.Native.dll не указан.","source");
+            if(string.IsNullOrWhiteSpace(source))throw new ArgumentException(I18n.Text("Путь к ChainedGuard.Native.dll не указан.","The ChainedGuard.Native.dll path was not specified."),"source");
             string original=Path.GetFullPath(source);CheckDllLength(original);
             if(!useFallback) {
                 CheckFolderLength(DirectoryPath(Path.GetDirectoryName(original)));

@@ -9,12 +9,13 @@ namespace ChainedGuard {
     // Application data only. Game discovery paths are never supplied to this helper.
     internal static class HostStorage {
         internal sealed class Location {
-            public readonly string BaseFolder,SettingsPath,LogFolder,ErrorFile,Diagnostic;
+            public readonly string BaseFolder,SettingsPath,LogFolder,ErrorFile;
             public readonly bool UsesFallback,IsWritable;
-            internal Location(string folder,bool fallback,bool writable,string diagnostic) {
+            public string Diagnostic { get { return !UsesFallback?null:(IsWritable?I18n.Text("Папка Dodger доступна только для чтения. Настройки и журнал сохраняются в LocalAppData.","The Dodger folder is read-only. Settings and logs are stored in LocalAppData."):I18n.Text("Настройки и журнал недоступны для записи: нет прав ни в папке Dodger, ни в LocalAppData.","Settings and logs cannot be written: neither the Dodger folder nor LocalAppData is writable.")); } }
+            internal Location(string folder,bool fallback,bool writable) {
                 BaseFolder=folder;SettingsPath=Path.Combine(folder,"settings.xml");
                 LogFolder=Path.Combine(folder,"logs");ErrorFile=Path.Combine(folder,"host-error.log");
-                UsesFallback=fallback;IsWritable=writable;Diagnostic=diagnostic;
+                UsesFallback=fallback;IsWritable=writable;
             }
         }
         private static readonly Lazy<Location> current=new Lazy<Location>(delegate {
@@ -33,12 +34,10 @@ namespace ChainedGuard {
         internal static Location Resolve(string applicationFolder,string localAppData,Func<string,bool> probe=null) {
             string application=Normalize(applicationFolder);
             Func<string,bool> canWrite=probe??TryWritableFolder;
-            if(canWrite(application))return new Location(application,false,true,null);
+            if(canWrite(application))return new Location(application,false,true);
             string fallback=Path.Combine(Normalize(localAppData),"Dodger",CopyKey(application));
             bool writable=canWrite(fallback);
-            return new Location(fallback,true,writable,writable
-                ?"Папка Dodger доступна только для чтения. Настройки и журнал сохраняются в LocalAppData."
-                :"Настройки и журнал недоступны для записи: нет прав ни в папке Dodger, ни в LocalAppData.");
+            return new Location(fallback,true,writable);
         }
         internal static string CopyKey(string applicationFolder) {
             string normalized=Normalize(applicationFolder).ToUpperInvariant();

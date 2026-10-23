@@ -12,7 +12,10 @@
 # User data and local tools
 /settings.xml
 /logs/
+/panel-fixture-logs/
 /self-test.txt
+/self-test-exit-code.txt
+/panel-version*.png
 /.vs/
 /.vscode/
 *.user

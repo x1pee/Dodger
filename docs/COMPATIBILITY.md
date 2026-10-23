@@ -1,6 +1,6 @@
 # Compatibility and operation
 
-Version 18 targets Windows 10/11 x64 and .NET Framework 4.8/4.8.1. Local verification was performed on Windows 11 x64. Windows 10, other computers, Wine/Proton, Linux, macOS, Windows ARM, and 32-bit systems have not been independently validated; native Linux/macOS builds are not provided.
+Version 19 targets Windows 10/11 x64 and .NET Framework 4.8/4.8.1. Local verification was performed on Windows 11 x64. Windows 10, other computers, Wine/Proton, Linux, macOS, Windows ARM, and 32-bit systems have not been independently validated; native Linux/macOS builds are not provided.
 
 ## Supported game build
 
@@ -22,7 +22,11 @@ Extract the full release ZIP into a writable folder. Keep the EXE, its configura
 
 Automatic defense starts disabled in a normal launch. Enable the desired options in the panel. Minimize it with the normal window control; restore it from the taskbar or tray. F8 is not intercepted. F9 adds a diagnostic marker. Alt+Tab hides the HUD and pauses automation while the game is not active.
 
-After updating Dodger, completely close and reopen both Dodger and the game, so the old module is unloaded. No save files are included or modified by installation. Settings and logs are normally stored beside the EXE, with a per-copy LocalAppData fallback if that location is not writable. The panel opens the actual log folder.
+Choose **RU / EN** in the panel header to switch between Russian and English immediately. The selected language is saved with your settings. Switching language preserves the current defense options and connection.
+
+Close Dodger before replacing its files, then reopen it. If the native module changes, also restart the game to unload the old module. No save files are included or modified by installation. Settings and logs are normally stored beside the EXE, with a per-copy LocalAppData fallback if that location is not writable. The panel opens the actual log folder.
+
+Version 19 changes the host interface and messages. Its native combat module is identical to version 18; defense behavior and timing are unchanged. A game already running the version 18 module does not need restarting for this language update.
 
 The legacy native log path must fit within 170 characters; use a short installation path. Run Dodger with the same privilege level as the game.
 

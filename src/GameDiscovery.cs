@@ -38,28 +38,28 @@ namespace ChainedGuard {
         public static bool ValidateFolder(string folderOrExe, out Candidate candidate, out string reason) {
             candidate=null;reason=null;
             try {
-                if(string.IsNullOrWhiteSpace(folderOrExe)){reason="Папка игры не выбрана.";return false;}
+                if(string.IsNullOrWhiteSpace(folderOrExe)){reason=I18n.Text("Папка игры не выбрана.","No game folder selected.");return false;}
                 string input=folderOrExe.Trim().Trim('"');
-                if(IsArchive(input) && !Directory.Exists(input)){reason="Сначала распакуй весь архив игры в отдельную папку, затем выбери ChainedBeasts.exe.";return false;}
+                if(IsArchive(input) && !Directory.Exists(input)){reason=I18n.Text("Сначала распакуй весь архив игры в отдельную папку, затем выбери ChainedBeasts.exe.","Extract the entire game archive to a separate folder, then select ChainedBeasts.exe.");return false;}
                 string full=LocalPath(input);
-                if(full==null){reason="Выбери установленную игру на локальном диске.";return false;}
+                if(full==null){reason=I18n.Text("Выбери установленную игру на локальном диске.","Select a game installation on a local drive.");return false;}
                 string folder=string.Equals(Path.GetFileName(full),"ChainedBeasts.exe",StringComparison.OrdinalIgnoreCase)?Path.GetDirectoryName(full):full;
                 string exe=Path.Combine(folder,"ChainedBeasts.exe");
-                if(!File.Exists(exe)){reason="В выбранной папке нет ChainedBeasts.exe. Если игра в архиве, распакуй его полностью.";return false;}
-                if(!IsX64Pe(exe,false)){reason="Нужен Windows x64 ChainedBeasts.exe.";return false;}
+                if(!File.Exists(exe)){reason=I18n.Text("В выбранной папке нет ChainedBeasts.exe. Если игра в архиве, распакуй его полностью.","ChainedBeasts.exe was not found in this folder. If the game is archived, extract it completely.");return false;}
+                if(!IsX64Pe(exe,false)){reason=I18n.Text("Нужен Windows x64 ChainedBeasts.exe.","The Windows x64 ChainedBeasts.exe is required.");return false;}
                 if(!IsX64Pe(Path.Combine(folder,"GameAssembly.dll"),true) || !IsX64Pe(Path.Combine(folder,"UnityPlayer.dll"),true)) {
-                    reason="Папка игры неполная: нужны GameAssembly.dll и UnityPlayer.dll для Windows x64. Распакуй или восстанови всю игру.";return false;
+                    reason=I18n.Text("Папка игры неполная: нужны GameAssembly.dll и UnityPlayer.dll для Windows x64. Распакуй или восстанови всю игру.","The game folder is incomplete: Windows x64 GameAssembly.dll and UnityPlayer.dll are required. Extract or restore the complete game.");return false;
                 }
                 string metadata=Path.Combine(folder,"ChainedBeasts_Data","il2cpp_data","Metadata","global-metadata.dat");
                 using(var stream=new FileStream(metadata,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
                 using(var reader=new BinaryReader(stream)) {
-                    if(stream.Length<8 || reader.ReadUInt32()!=0xFAB11BAFu){reason="Метаданные ChainedBeasts_Data отсутствуют или повреждены. Нужна полностью распакованная игра.";return false;}
+                    if(stream.Length<8 || reader.ReadUInt32()!=0xFAB11BAFu){reason=I18n.Text("Метаданные ChainedBeasts_Data отсутствуют или повреждены. Нужна полностью распакованная игра.","ChainedBeasts_Data metadata is missing or damaged. The complete extracted game is required.");return false;}
                     int version=reader.ReadInt32();
-                    if(version<16 || version>128){reason="Метаданные игры не распознаны.";return false;}
+                    if(version<16 || version>128){reason=I18n.Text("Метаданные игры не распознаны.","Game metadata was not recognized.");return false;}
                 }
-                candidate=new Candidate{Folder=folder,ExePath=exe,Source="Выбрана папка",Store="Direct"};return true;
+                candidate=new Candidate{Folder=folder,ExePath=exe,Source=I18n.Text("Выбрана папка","Selected folder"),Store="Direct"};return true;
             } catch(Exception ex) { if(!IsFileError(ex))throw;
-                reason="Не удалось прочитать полную папку игры: "+ex.Message;return false;
+                reason=I18n.Text("Не удалось прочитать полную папку игры: ","Could not read the complete game folder: ")+ex.Message;return false;
             }
         }
 
@@ -90,8 +90,8 @@ namespace ChainedGuard {
             private void AddExcluded(string path){string full=LocalPath(path);if(full!=null)excluded.Add(full.TrimEnd(Path.DirectorySeparatorChar));}
             public Result Run() {
                 try {
-                    Probe(options.SavedFolder,"Сохранённая папка",null);
-                    if(options.KnownFolders!=null)foreach(string path in options.KnownFolders){if(!Check())break;Probe(path,"Известная папка",null);}
+                    Probe(options.SavedFolder,I18n.Text("Сохранённая папка","Saved folder"),null);
+                    if(options.KnownFolders!=null)foreach(string path in options.KnownFolders){if(!Check())break;Probe(path,I18n.Text("Известная папка","Known folder"),null);}
                     Nearby(options.LauncherFolder);
                     if(options.SteamRoots!=null)foreach(string path in options.SteamRoots){if(!Check())break;AddSteam(path);}
                     if(options.IncludeRegistry && Check()) ReadRegistry();
@@ -101,18 +101,18 @@ namespace ChainedGuard {
                         IList<string> roots=options.SearchRoots??LocalDriveRoots();
                         Walk(roots);
                     }
-                    if(depthLimited && result.Candidates.Count==0){result.BudgetExceeded=true;Note("Достигнут предел глубины папок; выбери папку игры вручную.");}
+                    if(depthLimited && result.Candidates.Count==0){result.BudgetExceeded=true;Note(I18n.Text("Достигнут предел глубины папок; выбери папку игры вручную.","The folder depth limit was reached; select the game folder manually."));}
                     if(!result.Cancelled && !result.BudgetExceeded)result.Complete=true;
-                } catch(Exception ex) { if(!IsFileError(ex))throw; Note("Поиск остановлен: "+ex.Message); }
-                Publish(null,"Поиск завершён",null,true);return result;
+                } catch(Exception ex) { if(!IsFileError(ex))throw; Note(I18n.Text("Поиск остановлен: ","Search stopped: ")+ex.Message); }
+                Publish(null,I18n.Text("Поиск завершён","Search complete"),null,true);return result;
             }
             private bool Check() {
                 if(result.Cancelled || result.BudgetExceeded)return false;
                 if(cancellation.IsCancellationRequested || (options.MayContinue!=null && !options.MayContinue())) {
-                    result.Cancelled=true;Note("Поиск отменён или приостановлен запуском игры.");return false;
+                    result.Cancelled=true;Note(I18n.Text("Поиск отменён или приостановлен запуском игры.","Search was canceled or paused because the game is starting."));return false;
                 }
                 if(timer.Elapsed>=options.TimeBudget || result.EntriesVisited>=Math.Max(1,options.EntryBudget)) {
-                    result.BudgetExceeded=true;Note("Достигнут лимит поиска; выбери папку игры или повтори поиск.");return false;
+                    result.BudgetExceeded=true;Note(I18n.Text("Достигнут лимит поиска; выбери папку игры или повтори поиск.","The search limit was reached; select the game folder or search again."));return false;
                 }
                 return true;
             }
@@ -133,17 +133,17 @@ namespace ChainedGuard {
                 Candidate candidate;string reason;
                 if(!ValidateFolder(normalized,out candidate,out reason))return;
                 candidate.Source=source;if(annotate!=null)annotate(candidate);
-                result.Candidates.Add(candidate);Publish(candidate.Folder,"Найдена папка игры",candidate,true);
+                result.Candidates.Add(candidate);Publish(candidate.Folder,I18n.Text("Найдена папка игры","Game folder found"),candidate,true);
             }
             private void Nearby(string launcher) {
                 string folder=LocalPath(launcher);if(folder==null)return;
                 if(File.Exists(folder))folder=Path.GetDirectoryName(folder);
                 for(int level=0;level<3 && folder!=null && Check();level++) {
-                    Probe(folder,"Рядом с Dodger",null);
+                    Probe(folder,I18n.Text("Рядом с Dodger","Near Dodger"),null);
                     try {
                         foreach(string child in Directory.EnumerateDirectories(folder)) {
                             if(!Visit() || !Check())return;
-                            if(IsGameName(Path.GetFileName(child)) && !IsReparse(child))Probe(child,"Рядом с Dodger",null);
+                            if(IsGameName(Path.GetFileName(child)) && !IsReparse(child))Probe(child,I18n.Text("Рядом с Dodger","Near Dodger"),null);
                         }
                     } catch(Exception ex) { if(!IsFileError(ex))throw; }
                     folder=Path.GetDirectoryName(folder);
@@ -164,7 +164,7 @@ namespace ChainedGuard {
                                 if(uninstall!=null)foreach(string name in uninstall.GetSubKeyNames()) {
                                     if(!Visit())return;
                                     using(RegistryKey item=uninstall.OpenSubKey(name))if(item!=null && IsGameName(item.GetValue("DisplayName") as string)) {
-                                        string source="Установленная игра";
+                                        string source=I18n.Text("Установленная игра","Installed game");
                                         Probe(item.GetValue("InstallLocation") as string,source,null);
                                         string icon=IconPath(item.GetValue("DisplayIcon") as string);
                                         if(icon!=null)Probe(Path.GetDirectoryName(icon),source,null);
@@ -179,7 +179,7 @@ namespace ChainedGuard {
                                 }
                             }
                         }
-                    } catch(Exception ex) { if(!IsRegistryError(ex))throw; Note("Один из источников реестра недоступен."); }
+                    } catch(Exception ex) { if(!IsRegistryError(ex))throw; Note(I18n.Text("Один из источников реестра недоступен.","One registry source is unavailable.")); }
                 }
             }
             private void ReadSteam(string root) {
@@ -202,7 +202,7 @@ namespace ChainedGuard {
                             if(!IsGameName(title) && !IsGameName(install))continue;
                             string common=Path.Combine(apps,"common"),folder=ChildPath(common,install);if(folder==null)continue;
                             string appId=NumericId(id) && string.Equals(Path.GetFileNameWithoutExtension(manifest),"appmanifest_"+id,StringComparison.OrdinalIgnoreCase)?id:null;
-                            Probe(folder,"Библиотека Steam",delegate(Candidate candidate){candidate.Store="Steam";candidate.SteamAppId=appId;candidate.LaunchUri=appId==null?null:"steam://rungameid/"+appId;});
+                            Probe(folder,I18n.Text("Библиотека Steam","Steam library"),delegate(Candidate candidate){candidate.Store="Steam";candidate.SteamAppId=appId;candidate.LaunchUri=appId==null?null:"steam://rungameid/"+appId;});
                         }
                     } catch(Exception ex) { if(!IsFileError(ex))throw; }
                 }
@@ -235,7 +235,7 @@ namespace ChainedGuard {
                     if(full!=null && !IsReparse(full) && !Skip(full) && seen.Add(full))queue.Enqueue(new Work{Folder=full});
                 }
                 while(queue.Count>0 && Check()) {
-                    Work work=queue.Dequeue();Publish(work.Folder,"Поиск на локальных дисках",null,false);
+                    Work work=queue.Dequeue();Publish(work.Folder,I18n.Text("Поиск на локальных дисках","Searching local drives"),null,false);
                     try {
                         foreach(string path in Directory.EnumerateFileSystemEntries(work.Folder)) {
                             if(!Visit())return;
@@ -246,7 +246,7 @@ namespace ChainedGuard {
                                 if(work.Depth<Math.Max(0,options.MaximumDepth) && !Skip(path) && seen.Add(path))queue.Enqueue(new Work{Folder=path,Depth=work.Depth+1});
                                 else if(work.Depth>=Math.Max(0,options.MaximumDepth) && !Skip(path))depthLimited=true;
                             } else if(string.Equals(Path.GetFileName(path),"ChainedBeasts.exe",StringComparison.OrdinalIgnoreCase)) {
-                                Probe(work.Folder,"Поиск на диске",null);if(result.Candidates.Count>0)return;
+                                Probe(work.Folder,I18n.Text("Поиск на диске","Drive search"),null);if(result.Candidates.Count>0)return;
                             }
                         }
                     } catch(Exception ex) { if(!IsFileError(ex))throw; }

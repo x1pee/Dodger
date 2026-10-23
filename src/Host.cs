@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -57,7 +58,7 @@ namespace ChainedGuard {
 
     internal static class Branding {
         public const string Name="Dodger";
-        public const string Version="18";
+        public const string Version="19";
         public static ImageSource WindowIcon() {
             using(var stream=System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("Dodger.Icon")) {
                 if(stream==null)throw new InvalidOperationException("Embedded Dodger icon is missing.");
@@ -131,14 +132,15 @@ namespace ChainedGuard {
         public bool InterruptChargedAttack=true;
         public int Mode = 0;
         public string GameFolder;
+        public string Language=I18n.DefaultLanguage;
         public static string FilePath { get { return HostStorage.SettingsPath; } }
         public static Settings Load() {
             try{return FromXml(XElement.Load(FilePath));}catch{
                 try{return FromXml(XElement.Load(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"settings.xml")));}catch{return new Settings();}
             }
         }
-        internal static Settings FromXml(XElement x) { var s=new Settings();bool b;if(bool.TryParse((string)x.Element("Overlay"),out b))s.Overlay=b;if(bool.TryParse((string)x.Element("BlockInvulnerable"),out b))s.BlockInvulnerable=b;if(bool.TryParse((string)x.Element("InterruptChargedAttack"),out b))s.InterruptChargedAttack=b;s.GameFolder=(string)x.Element("GameFolder");return s; }
-        internal XElement ToXml() { return new XElement("ChainedGuard",new XElement("Overlay",Overlay),new XElement("BlockInvulnerable",BlockInvulnerable),new XElement("InterruptChargedAttack",InterruptChargedAttack),new XElement("GameFolder",GameFolder??"")); }
+        internal static Settings FromXml(XElement x) { var s=new Settings();bool b;if(bool.TryParse((string)x.Element("Overlay"),out b))s.Overlay=b;if(bool.TryParse((string)x.Element("BlockInvulnerable"),out b))s.BlockInvulnerable=b;if(bool.TryParse((string)x.Element("InterruptChargedAttack"),out b))s.InterruptChargedAttack=b;s.GameFolder=(string)x.Element("GameFolder");s.Language=x.Element("Language")==null?"ru":I18n.Normalize((string)x.Element("Language"));return s; }
+        internal XElement ToXml() { return new XElement("ChainedGuard",new XElement("Overlay",Overlay),new XElement("BlockInvulnerable",BlockInvulnerable),new XElement("InterruptChargedAttack",InterruptChargedAttack),new XElement("GameFolder",GameFolder??""),new XElement("Language",I18n.Normalize(Language))); }
         public void Save() {
             ToXml().Save(FilePath);
         }
@@ -267,21 +269,21 @@ namespace ChainedGuard {
         public static bool Inject(int pid,string path,out string reason) {
             reason=""; IntPtr proc=IntPtr.Zero,buffer=IntPtr.Zero,thread=IntPtr.Zero;
             try {
-                proc=OpenProcess(VMOperation|VMRead|VMWrite|CreateThread|Query,false,pid); if(proc==IntPtr.Zero) throw new Exception("Нет доступа к процессу. Запустите панель с теми же правами, что и игру.");
+                proc=OpenProcess(VMOperation|VMRead|VMWrite|CreateThread|Query,false,pid); if(proc==IntPtr.Zero) throw new Exception(I18n.Text("Нет доступа к процессу. Запустите панель с теми же правами, что и игру.","Access denied. Run Dodger with the same permissions as the game."));
                 byte[] bytes=Encoding.Unicode.GetBytes(Path.GetFullPath(path)+"\0");
-                buffer=VirtualAllocEx(proc,IntPtr.Zero,(UIntPtr)bytes.Length,0x3000,0x04); if(buffer==IntPtr.Zero) throw new Exception("Не удалось выделить память для подключения.");
-                UIntPtr written; if(!WriteProcessMemory(proc,buffer,bytes,(UIntPtr)bytes.Length,out written) || written.ToUInt64()!=(ulong)bytes.Length) throw new Exception("Не удалось передать путь модуля.");
+                buffer=VirtualAllocEx(proc,IntPtr.Zero,(UIntPtr)bytes.Length,0x3000,0x04); if(buffer==IntPtr.Zero) throw new Exception(I18n.Text("Не удалось выделить память для подключения.","Could not allocate memory for the connection."));
+                UIntPtr written; if(!WriteProcessMemory(proc,buffer,bytes,(UIntPtr)bytes.Length,out written) || written.ToUInt64()!=(ulong)bytes.Length) throw new Exception(I18n.Text("Не удалось передать путь модуля.","Could not transfer the module path."));
                 IntPtr localKernel=GetModuleHandle("kernel32.dll");
-                IntPtr load=GetProcAddress(localKernel,"LoadLibraryW"); if(load==IntPtr.Zero) throw new Exception("LoadLibraryW недоступен.");
+                IntPtr load=GetProcAddress(localKernel,"LoadLibraryW"); if(load==IntPtr.Zero) throw new Exception(I18n.Text("LoadLibraryW недоступен.","LoadLibraryW is unavailable."));
                 string owner="kernel32.dll";IntPtr ownerBase=localKernel;
                 using(var current=Process.GetCurrentProcess()) foreach(ProcessModule module in current.Modules) { long first=module.BaseAddress.ToInt64();if(load.ToInt64()>=first && load.ToInt64()<first+module.ModuleMemorySize){owner=module.ModuleName;ownerBase=module.BaseAddress;break;} }
                 IntPtr remoteOwner=IntPtr.Zero;
                 using(var target=Process.GetProcessById(pid)) foreach(ProcessModule module in target.Modules) if(string.Equals(module.ModuleName,owner,StringComparison.OrdinalIgnoreCase)){remoteOwner=module.BaseAddress;break;}
-                if(remoteOwner==IntPtr.Zero)throw new Exception("Не найдена системная функция загрузки в игровом процессе.");
+                if(remoteOwner==IntPtr.Zero)throw new Exception(I18n.Text("Не найдена системная функция загрузки в игровом процессе.","The system loader was not found in the game process."));
                 load=new IntPtr(remoteOwner.ToInt64()+(load.ToInt64()-ownerBase.ToInt64()));
-                uint tid; thread=CreateRemoteThread(proc,IntPtr.Zero,UIntPtr.Zero,load,buffer,0,out tid); if(thread==IntPtr.Zero) throw new Exception("Не удалось загрузить модуль в игру.");
-                uint wait=WaitForSingleObject(thread,5000); if(wait!=0) { buffer=IntPtr.Zero; throw new Exception("Игра ещё загружает модуль. Ожидайте сигнала подключения."); }
-                uint code; if(!GetExitCodeThread(thread,out code) || code==0) throw new Exception("Игра не смогла загрузить ChainedGuard.Native.dll.");
+                uint tid; thread=CreateRemoteThread(proc,IntPtr.Zero,UIntPtr.Zero,load,buffer,0,out tid); if(thread==IntPtr.Zero) throw new Exception(I18n.Text("Не удалось загрузить модуль в игру.","Could not load the module into the game."));
+                uint wait=WaitForSingleObject(thread,5000); if(wait!=0) { buffer=IntPtr.Zero; throw new Exception(I18n.Text("Игра ещё загружает модуль. Ожидайте сигнала подключения.","The game is still loading the module. Waiting for a connection signal.")); }
+                uint code; if(!GetExitCodeThread(thread,out code) || code==0) throw new Exception(I18n.Text("Игра не смогла загрузить ChainedGuard.Native.dll.","The game could not load ChainedGuard.Native.dll."));
                 return true;
             } catch(Exception ex) { reason=ex.Message; return false; }
             finally { if(thread!=IntPtr.Zero) CloseHandle(thread); if(buffer!=IntPtr.Zero && proc!=IntPtr.Zero) VirtualFreeEx(proc,buffer,UIntPtr.Zero,0x8000); if(proc!=IntPtr.Zero) CloseHandle(proc); }
@@ -693,12 +695,15 @@ namespace ChainedGuard {
         private TextBlock stateText,connectionText,playerText,signalText,detailText,infoText,blocksValue,dodgesValue,threatsValue,logNoteText,projectileDodgesValue,traceStateText;
         private Border statePill;
         private Button attach;
+        private readonly List<Action> localizers=new List<Action>();
+        private Button languageRu,languageEn;
+        private Expander statsExpander;
         private readonly string root=AppDomain.CurrentDomain.BaseDirectory;
         private const string ExpectedHash="C7437CED53B682904EAF18356AEF16613AFA436141E2C706A7560D3A1A4DACDD";
 
-        public GuardWindow(StartupOptions options,EventWaitHandle request,bool uiFixture=false) {
+        public GuardWindow(StartupOptions options,EventWaitHandle request,bool uiFixture=false,string fixtureLanguage=null) {
             panelRequest=request;
-            this.uiFixture=uiFixture;preview=options.Preview; settings=uiFixture?new Settings():Settings.Load(); overlay=uiFixture?null:new ThreatWindow();if(overlay!=null)overlay.FrameProvider=ReadHudFrame;
+            this.uiFixture=uiFixture;preview=options.Preview; settings=uiFixture?new Settings():Settings.Load();if(uiFixture&&fixtureLanguage!=null)settings.Language=I18n.Normalize(fixtureLanguage);I18n.Language=settings.Language; overlay=uiFixture?null:new ThreatWindow();if(overlay!=null)overlay.FrameProvider=ReadHudFrame;
             hostLog=new HostLog(uiFixture?Path.Combine(root,"panel-fixture-logs"):HostStorage.LogFolder);
             hostLog.Write("session_start","preview",preview,"block_requested",options.Block,"dodge_requested",options.Dodge,"minimized_requested",options.Minimized,"block_invulnerable_requested",options.BlockInvulnerable,"priority_defense_requested",options.PriorityDefense,"marker_seed",markerSeq);
             Title=Branding.Name;Icon=Branding.WindowIcon(); Width=500; SizeToContent=SizeToContent.Height; MinWidth=470; MaxHeight=Math.Max(300,SystemParameters.WorkArea.Height-24); WindowStartupLocation=WindowStartupLocation.CenterScreen;ShowActivated=!options.Minimized;
@@ -716,13 +721,13 @@ namespace ChainedGuard {
             };
             trayIcon=Branding.TrayIcon();tray=new System.Windows.Forms.NotifyIcon { Icon=trayIcon,Text="Dodger",Visible=true };
             var menu=new System.Windows.Forms.ContextMenuStrip();
-            menu.Items.Add("Открыть панель",null,delegate{Dispatcher.BeginInvoke(new Action(ShowPanel));});
-            menu.Items.Add("Завершить",null,delegate{Dispatcher.BeginInvoke(new Action(Close));});
+            var openItem=menu.Items.Add(I18n.Text("Открыть панель","Open panel"),null,delegate{Dispatcher.BeginInvoke(new Action(ShowPanel));});localizers.Add(delegate{openItem.Text=I18n.Text("Открыть панель","Open panel");});
+            var exitItem=menu.Items.Add(I18n.Text("Завершить","Exit"),null,delegate{Dispatcher.BeginInvoke(new Action(Close));});localizers.Add(delegate{exitItem.Text=I18n.Text("Завершить","Exit");});
             tray.ContextMenuStrip=menu;tray.DoubleClick+=delegate{Dispatcher.BeginInvoke(new Action(ShowPanel));};
             SourceInitialized+=delegate {
                 self=new WindowInteropHelper(this).Handle; hookProc=KeyboardHook;
                 hook=Native.SetWindowsHookEx(13,hookProc,Native.GetModuleHandle(null),0);
-                if(hook==IntPtr.Zero) detailText.Text="Метка F9 недоступна. Боевой журнал записывается автоматически.";
+                if(hook==IntPtr.Zero) detailText.Text=I18n.Text("Метка F9 недоступна. Боевой журнал записывается автоматически.","F9 markers are unavailable. Combat logging is automatic.");
             };
             Closing+=delegate { closing=true;connectionEpoch++;discoveryEpoch++;CancelDiscovery();if(panelRequestWait!=null)panelRequestWait.Unregister(null);panelRequest.Dispose(); try{if(channel!=null)channel.Write(false,false,false,true,settings);}catch{}; timer.Stop(); overlay.Close(); if(hook!=IntPtr.Zero)Native.UnhookWindowsHookEx(hook); if(tray!=null){tray.Visible=false;tray.Dispose();}if(trayIcon!=null)trayIcon.Dispose(); try{settings.Save();}catch{}; if(channel!=null)channel.Dispose();hostLog.Write("session_end","reason","window_close");hostLog.Dispose(); };
             timer=new DispatcherTimer { Interval=TimeSpan.FromMilliseconds(40) }; timer.Tick+=Tick; timer.Start();
@@ -740,11 +745,23 @@ namespace ChainedGuard {
             };
             if(preview)detailText.Visibility=Visibility.Collapsed;
         }
-        private TextBlock Text(string text,double size,string color) { return new TextBlock{ Text=text,FontSize=size,Foreground=Brush(color),TextWrapping=TextWrapping.Wrap }; }
+        private void WatchLocalized(DependencyObject element,DependencyProperty property) {
+            Action apply=delegate { string current=element.GetValue(property) as string;string translated=I18n.Translate(current);if(current!=translated)element.SetCurrentValue(property,translated); };
+            localizers.Add(apply);DependencyPropertyDescriptor.FromProperty(property,element.GetType()).AddValueChanged(element,delegate{apply();});apply();
+        }
+        private void ApplyLanguage(string language) {
+            settings.Language=I18n.Normalize(language);I18n.Language=settings.Language;
+            foreach(var apply in localizers)apply();
+            // The action is stateful: a language change must retain an active scan.
+            searchButton.Content=discoveryWorking?I18n.Text("Стоп","Stop"):I18n.Text("Найти","Find");
+            languageRu.Foreground=Brush(settings.Language=="ru"?"#D7E8AB":"#829798");languageEn.Foreground=Brush(settings.Language=="en"?"#D7E8AB":"#829798");
+            SavePrefs();
+        }
+        private TextBlock Text(string text,double size,string color) { var block=new TextBlock{ Text=text,FontSize=size,Foreground=Brush(color),TextWrapping=TextWrapping.Wrap };WatchLocalized(block,TextBlock.TextProperty);WatchLocalized(block,FrameworkElement.ToolTipProperty);return block; }
         private Border Card(UIElement child) { return new Border{ Background=Brush("#181E21"),BorderBrush=Brush("#293236"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(14),Padding=new Thickness(16),Child=child }; }
         private Button Button(string text,bool primary) {
             var b=new Button { Content=text,Padding=new Thickness(18,10,18,10),Background=Brush(primary?"#D7E8AB":"#232D31"),Foreground=Brush(primary?"#182019":"#E5EBED"),BorderThickness=new Thickness(0),Cursor=Cursors.Hand,FontWeight=FontWeights.SemiBold,FontSize=13 };
-            b.Template=(ControlTemplate)XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Button'><Border Background='{TemplateBinding Background}' CornerRadius='8' Padding='{TemplateBinding Padding}'><ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border><ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter Property='Opacity' Value='0.85'/></Trigger><Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger></ControlTemplate.Triggers></ControlTemplate>"); return b;
+            b.Template=(ControlTemplate)XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Button'><Border Background='{TemplateBinding Background}' CornerRadius='8' Padding='{TemplateBinding Padding}'><ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border><ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter Property='Opacity' Value='0.85'/></Trigger><Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger></ControlTemplate.Triggers></ControlTemplate>"); WatchLocalized(b,ContentControl.ContentProperty);WatchLocalized(b,FrameworkElement.ToolTipProperty);return b;
         }
         private ToggleButton Toggle(bool value) {
             var t=new ToggleButton { Width=44,Height=26,IsChecked=value,Cursor=Cursors.Hand,VerticalAlignment=VerticalAlignment.Center,Focusable=false };
@@ -774,7 +791,7 @@ namespace ChainedGuard {
             options.BeginAnimation(FrameworkElement.HeightProperty,height);options.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(opacity,visible?1:0,TimeSpan.FromMilliseconds(140)));
         }
         private UIElement ToggleRow(string title,string sub,string key,out ToggleButton toggle,bool value) {
-            var g=new Grid{ Margin=new Thickness(0,0,0,8),ToolTip=sub }; g.ColumnDefinitions.Add(new ColumnDefinition());g.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});g.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+            var g=new Grid{ Margin=new Thickness(0,0,0,8),ToolTip=sub };WatchLocalized(g,FrameworkElement.ToolTipProperty); g.ColumnDefinitions.Add(new ColumnDefinition());g.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});g.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
             var words=Text(title,15,"#ECF0F1");words.VerticalAlignment=VerticalAlignment.Center;words.ToolTip=sub;g.Children.Add(words);
             if(!string.IsNullOrEmpty(key)){var k=new Border{BorderBrush=Brush("#394449"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(7,3,7,3),Margin=new Thickness(12,0,16,0),VerticalAlignment=VerticalAlignment.Center,Child=Text(key,10,"#A8B3B6")};Grid.SetColumn(k,1);g.Children.Add(k);}
             toggle=Toggle(value);Grid.SetColumn(toggle,2);g.Children.Add(toggle);var control=toggle;g.Cursor=Cursors.Hand;
@@ -788,50 +805,54 @@ namespace ChainedGuard {
             var stack=new StackPanel();outer.Child=stack;Content=outer;
             var header=new Grid{Margin=new Thickness(0,0,0,16)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
             var title=new StackPanel{Orientation=Orientation.Horizontal};title.Children.Add(new Image{Source=Icon,Width=27,Height=27,Margin=new Thickness(0,0,10,0)});title.Children.Add(new TextBlock { Text="DODGER",FontSize=18,FontWeight=FontWeights.Bold,Foreground=Brush("#EAF0E5"),VerticalAlignment=VerticalAlignment.Center });title.Children.Add(new TextBlock{Text="version "+Branding.Version,FontSize=10,Foreground=Brush("#829798"),Margin=new Thickness(9,0,0,0),VerticalAlignment=VerticalAlignment.Center});header.Children.Add(title);
-            var controls=new StackPanel{Orientation=Orientation.Horizontal};var hide=Button("—",false);hide.Padding=new Thickness(10,6,10,6);hide.FontSize=11;hide.ToolTip="Свернуть окно настроек";hide.Click+=delegate{MinimizePanel("window_button");};controls.Children.Add(hide);var close=Button("×",false);close.Padding=new Thickness(10,3,10,7);close.FontSize=16;close.Margin=new Thickness(6,0,0,0);close.Click+=delegate{Close();};controls.Children.Add(close);Grid.SetColumn(controls,1);header.Children.Add(controls);header.MouseLeftButtonDown+=delegate(object sender,MouseButtonEventArgs e){if(e.LeftButton==MouseButtonState.Pressed)try{DragMove();}catch{}};stack.Children.Add(header);
+            var controls=new StackPanel{Orientation=Orientation.Horizontal};
+            languageRu=Button("RU",false);languageEn=Button("EN",false);
+            foreach(var languageButton in new[]{languageRu,languageEn}){languageButton.Padding=new Thickness(5,6,5,6);languageButton.FontSize=10;languageButton.Background=Brushes.Transparent;languageButton.Focusable=false;controls.Children.Add(languageButton);}
+            languageEn.Margin=new Thickness(0,0,6,0);languageRu.Click+=delegate{ApplyLanguage("ru");};languageEn.Click+=delegate{ApplyLanguage("en");};
+            languageRu.Foreground=Brush(settings.Language=="ru"?"#D7E8AB":"#829798");languageEn.Foreground=Brush(settings.Language=="en"?"#D7E8AB":"#829798");var hide=Button("—",false);hide.Padding=new Thickness(10,6,10,6);hide.FontSize=11;hide.ToolTip=I18n.Text("Свернуть окно настроек","Minimize settings");hide.Click+=delegate{MinimizePanel("window_button");};controls.Children.Add(hide);var close=Button("×",false);close.Padding=new Thickness(10,3,10,7);close.FontSize=16;close.Margin=new Thickness(6,0,0,0);close.Click+=delegate{Close();};controls.Children.Add(close);Grid.SetColumn(controls,1);header.Children.Add(controls);header.MouseLeftButtonDown+=delegate(object sender,MouseButtonEventArgs e){if(e.LeftButton==MouseButtonState.Pressed)try{DragMove();}catch{}};stack.Children.Add(header);
             var statusRow=new Grid();statusRow.ColumnDefinitions.Add(new ColumnDefinition());statusRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-            stateText=Text("ОЖИДАНИЕ ИГРЫ",10,"#A7B8BC");stateText.FontWeight=FontWeights.SemiBold;
+            stateText=Text(I18n.Text("ОЖИДАНИЕ ИГРЫ","WAITING FOR GAME"),10,"#A7B8BC");stateText.FontWeight=FontWeights.SemiBold;
             statePill=new Border{Child=stateText,Background=Brush("#202B2E"),CornerRadius=new CornerRadius(5),Padding=new Thickness(8,5,8,5),HorizontalAlignment=HorizontalAlignment.Left};statusRow.Children.Add(statePill);
-            var auto=Text("●  Автоподключение",10,"#ADC58E");auto.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(auto,1);statusRow.Children.Add(auto);stack.Children.Add(statusRow);
-            detailText=Text("Запустите Chained Beasts — подключение произойдёт автоматически.",12,"#81969E");detailText.Margin=new Thickness(0,9,0,0);detailText.MinHeight=34;stack.Children.Add(detailText);
+            var auto=Text(I18n.Text("●  Автоподключение","●  Auto-connect"),10,"#ADC58E");auto.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(auto,1);statusRow.Children.Add(auto);stack.Children.Add(statusRow);
+            detailText=Text(I18n.Text("Запустите Chained Beasts — подключение произойдёт автоматически.","Start Chained Beasts to connect automatically."),12,"#81969E");detailText.Margin=new Thickness(0,9,0,0);detailText.MinHeight=34;stack.Children.Add(detailText);
             var connectActions=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,7,0,12)};
-            launchButton=Button("Запустить игру",false);launchButton.Padding=new Thickness(10,6,10,6);launchButton.FontSize=11;launchButton.Click+=delegate{Launch();};connectActions.Children.Add(launchButton);
-            folderButton=Button("Папка…",false);folderButton.Padding=new Thickness(10,6,10,6);folderButton.FontSize=11;folderButton.Margin=new Thickness(6,0,0,0);folderButton.ToolTip="Выбрать папку с распакованной игрой";folderButton.Click+=delegate{ChooseFolder();};connectActions.Children.Add(folderButton);
-            searchButton=Button("Найти",false);searchButton.Padding=new Thickness(10,6,10,6);searchButton.FontSize=11;searchButton.Margin=new Thickness(6,0,0,0);searchButton.Click+=delegate{if(discoveryWorking)CancelDiscovery();else BeginDiscovery(true);};connectActions.Children.Add(searchButton);
-            attach=Button("↻",false);attach.Padding=new Thickness(10,4,10,6);attach.ToolTip="Повторить подключение";attach.FontSize=14;attach.Margin=new Thickness(6,0,0,0);attach.Click+=delegate{Scan(true);};connectActions.Children.Add(attach);stack.Children.Add(connectActions);
-            folderText=Text(string.IsNullOrWhiteSpace(settings.GameFolder)?"Папка игры будет найдена автоматически.":settings.GameFolder,10,"#81969E");folderText.TextWrapping=TextWrapping.NoWrap;folderText.TextTrimming=TextTrimming.CharacterEllipsis;folderText.Margin=new Thickness(0,-5,0,12);folderText.ToolTip=folderText.Text;stack.Children.Add(folderText);
+            launchButton=Button(I18n.Text("Запустить игру","Launch game"),false);launchButton.Padding=new Thickness(10,6,10,6);launchButton.FontSize=11;launchButton.Click+=delegate{Launch();};connectActions.Children.Add(launchButton);
+            folderButton=Button(I18n.Text("Папка…","Folder…"),false);folderButton.Padding=new Thickness(10,6,10,6);folderButton.FontSize=11;folderButton.Margin=new Thickness(6,0,0,0);folderButton.ToolTip=I18n.Text("Выбрать папку с распакованной игрой","Select the extracted game folder");folderButton.Click+=delegate{ChooseFolder();};connectActions.Children.Add(folderButton);
+            searchButton=Button(I18n.Text("Найти","Find"),false);searchButton.Padding=new Thickness(10,6,10,6);searchButton.FontSize=11;searchButton.Margin=new Thickness(6,0,0,0);searchButton.Click+=delegate{if(discoveryWorking)CancelDiscovery();else BeginDiscovery(true);};connectActions.Children.Add(searchButton);
+            attach=Button("↻",false);attach.Padding=new Thickness(10,4,10,6);attach.ToolTip=I18n.Text("Повторить подключение","Reconnect");attach.FontSize=14;attach.Margin=new Thickness(6,0,0,0);attach.Click+=delegate{Scan(true);};connectActions.Children.Add(attach);stack.Children.Add(connectActions);
+            folderText=Text(string.IsNullOrWhiteSpace(settings.GameFolder)?I18n.Text("Папка игры будет найдена автоматически.","The game folder will be found automatically."):settings.GameFolder,10,"#81969E");folderText.TextWrapping=TextWrapping.NoWrap;folderText.TextTrimming=TextTrimming.CharacterEllipsis;folderText.Margin=new Thickness(0,-5,0,12);folderText.ToolTip=folderText.Text;stack.Children.Add(folderText);
             if(preview){folderText.Visibility=Visibility.Collapsed;connectActions.Visibility=Visibility.Collapsed;}
             var divider=new Border{Height=1,Background=Brush("#293438"),Margin=new Thickness(0,0,0,14)};stack.Children.Add(divider);
-            stack.Children.Add(ToggleRow("Автоблок","Поворачивает героя к удару и ставит блок. Нужен щит или перк защиты рукой. С перком блок рукой поглощает 75% урона.","ПКМ",out autoBlock,false));
+            stack.Children.Add(ToggleRow(I18n.Text("Автоблок","Auto-block"),I18n.Text("Поворачивает героя к удару и ставит блок. Нужен щит или перк защиты рукой. С перком блок рукой поглощает 75% урона.","Faces the incoming attack and blocks. Requires a shield or the arm-guard perk. With the perk, arm blocks absorb 75% of damage."),I18n.Text("ПКМ","RMB"),out autoBlock,false));
             var blockOptions=new Border{Margin=new Thickness(18,0,0,0),Height=0,Opacity=0,Visibility=Visibility.Collapsed,ClipToBounds=true};
-            var blockRowOption=ToggleRow("Блок при неуязвимости","Разрешает автоблок даже во время неуязвимости — ради оглушения противника. Щит при этом может терять прочность.","",out blockInvulnerable,!preview&&settings.BlockInvulnerable);
+            var blockRowOption=ToggleRow(I18n.Text("Блок при неуязвимости","Block while invulnerable"),I18n.Text("Разрешает автоблок даже во время неуязвимости — ради оглушения противника. Щит при этом может терять прочность.","Allows auto-block while invulnerable to stun attackers. This can consume shield durability."),"",out blockInvulnerable,!preview&&settings.BlockInvulnerable);
             var nestedGrid=blockRowOption as Grid;if(nestedGrid!=null){var label=nestedGrid.Children[0] as TextBlock;if(label!=null)label.FontSize=13;}
             blockOptions.Child=blockRowOption;
             blockOptions.SetBinding(UIElement.IsEnabledProperty,new System.Windows.Data.Binding("IsChecked"){Source=autoBlock});
             autoBlock.Checked+=delegate{SetBlockOptions(blockOptions,true,true);};autoBlock.Unchecked+=delegate{SetBlockOptions(blockOptions,false,true);};
             blockOptions.Loaded+=delegate{SetBlockOptions(blockOptions,autoBlock.IsChecked==true,false);};
             stack.Children.Add(blockOptions);
-            stack.Children.Add(ToggleRow("Автоуклонение","Полноценный уворот, если блок невозможен. Учитывает настоящие кадры неуязвимости, выносливость и травмы.","ПРОБЕЛ",out autoDodge,false));
-            stack.Children.Add(ToggleRow("Приоритет защиты","Задерживает новый удар, если замах помешает вовремя поставить блок или начать автоуклонение. Учитывает время до включения неуязвимости. Пропускает проверенное добивание обычным ближним ударом, если нет других угроз. Уже начатые атаки подчиняются правилам игры.","",out priorityDefense,false));
-            stack.Children.Add(ToggleRow("Прерывать усиленный удар","Разрешает автоматике отменить усиленный удар в блок или рывок, когда это разрешает игра. Неотменяемый замах не обходится. Требуется включённый автоблок или автоуклонение.",null,out interruptCharged,settings.InterruptChargedAttack));
-            stack.Children.Add(ToggleRow("Индикатор угрозы","Чёрный круг с цветной дугой — прочность щита. При угрозе появляется контур и знак !. Переход из оранжевого в красный начинается за 0,65 с и завершается за 0,3 с до попадания. Последние деления щита мигают чаще.","◇",out showOverlay,settings.Overlay));
-            var extra=new Expander{Header="Статистика и журнал",Foreground=Brush("#90A3AB"),FontSize=11,Margin=new Thickness(0,7,0,0)};
+            stack.Children.Add(ToggleRow(I18n.Text("Автоуклонение","Auto-dodge"),I18n.Text("Полноценный уворот, если блок невозможен. Учитывает настоящие кадры неуязвимости, выносливость и травмы.","Uses a full dodge when blocking is unavailable. Accounts for actual invulnerability frames, stamina and injuries."),I18n.Text("ПРОБЕЛ","SPACE"),out autoDodge,false));
+            stack.Children.Add(ToggleRow(I18n.Text("Приоритет защиты","Defense priority"),I18n.Text("Задерживает новый удар, если замах помешает вовремя поставить блок или начать автоуклонение. Учитывает время до включения неуязвимости. Пропускает проверенное добивание обычным ближним ударом, если нет других угроз. Уже начатые атаки подчиняются правилам игры.","Delays a new attack if its windup would prevent a timely block or dodge. Accounts for invulnerability startup. Allows a verified normal melee finisher when no other threats remain. Attacks already started follow the game's cancellation rules."),"",out priorityDefense,false));
+            stack.Children.Add(ToggleRow(I18n.Text("Прерывать усиленный удар","Interrupt charged attacks"),I18n.Text("Разрешает автоматике отменить усиленный удар в блок или рывок, когда это разрешает игра. Неотменяемый замах не обходится. Требуется включённый автоблок или автоуклонение.","Allows a charged attack to be canceled into a block or dodge when the game permits it. Cannot bypass an uncancelable windup. Requires auto-block or auto-dodge."),null,out interruptCharged,settings.InterruptChargedAttack));
+            stack.Children.Add(ToggleRow(I18n.Text("Индикатор угрозы","Threat indicator"),I18n.Text("Чёрный круг с цветной дугой — прочность щита. При угрозе появляется контур и знак !. Переход из оранжевого в красный начинается за 0,65 с и завершается за 0,3 с до попадания. Последние деления щита мигают чаще.","The black circle's colored arc shows shield durability. Incoming attacks add an outline and !. Orange turns red from 0.65 to 0.3 seconds before impact. The final shield segments blink faster."),"◇",out showOverlay,settings.Overlay));
+            var extra=new Expander{Header=I18n.Text("Статистика и журнал","Statistics and logs"),Foreground=Brush("#90A3AB"),FontSize=11,Margin=new Thickness(0,7,0,0)};
             var options=new StackPanel{Margin=new Thickness(1,14,1,0)};
             var blockRow=new Grid();blockRow.ColumnDefinitions.Add(new ColumnDefinition());blockRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-            var blockLabel=Text("Успешных блоков",13,"#A8BDC3");blockLabel.VerticalAlignment=VerticalAlignment.Center;blockRow.Children.Add(blockLabel);
+            var blockLabel=Text(I18n.Text("Успешных блоков","Successful blocks"),13,"#A8BDC3");blockLabel.VerticalAlignment=VerticalAlignment.Center;blockRow.Children.Add(blockLabel);
             blocksValue=Text("—",24,"#CBE6B0");blocksValue.FontWeight=FontWeights.SemiBold;Grid.SetColumn(blocksValue,1);blockRow.Children.Add(blocksValue);options.Children.Add(blockRow);
-            var statHint=Text("Считаются только удары, которые действительно удалось заблокировать.",10,"#6F8992");statHint.Margin=new Thickness(0,5,0,0);options.Children.Add(statHint);
-            var dashRow=new DockPanel{Margin=new Thickness(0,10,0,0)};dodgesValue=Text("—",13,"#CBE6B0");DockPanel.SetDock(dodgesValue,Dock.Right);dashRow.Children.Add(dodgesValue);dashRow.Children.Add(Text("Рывков выполнено",12,"#94ABB3"));options.Children.Add(dashRow);
-            var avoidedRow=new DockPanel{Margin=new Thickness(0,5,0,0)};projectileDodgesValue=Text("—",13,"#CBE6B0");DockPanel.SetDock(projectileDodgesValue,Dock.Right);avoidedRow.Children.Add(projectileDodgesValue);avoidedRow.Children.Add(Text("Снарядов избегнуто",12,"#94ABB3"));options.Children.Add(avoidedRow);
+            var statHint=Text(I18n.Text("Считаются только удары, которые действительно удалось заблокировать.","Counts only attacks actually blocked."),10,"#6F8992");statHint.Margin=new Thickness(0,5,0,0);options.Children.Add(statHint);
+            var dashRow=new DockPanel{Margin=new Thickness(0,10,0,0)};dodgesValue=Text("—",13,"#CBE6B0");DockPanel.SetDock(dodgesValue,Dock.Right);dashRow.Children.Add(dodgesValue);dashRow.Children.Add(Text(I18n.Text("Рывков выполнено","Dashes performed"),12,"#94ABB3"));options.Children.Add(dashRow);
+            var avoidedRow=new DockPanel{Margin=new Thickness(0,5,0,0)};projectileDodgesValue=Text("—",13,"#CBE6B0");DockPanel.SetDock(projectileDodgesValue,Dock.Right);avoidedRow.Children.Add(projectileDodgesValue);avoidedRow.Children.Add(Text(I18n.Text("Снарядов избегнуто","Projectiles evaded"),12,"#94ABB3"));options.Children.Add(avoidedRow);
             options.Children.Add(new Border{Height=1,Background=Brush("#293438"),Margin=new Thickness(0,12,0,12)});
-            logNoteText=Text(hostLog.Error==null?"Журнал записывается автоматически.\nПосле прогона опиши проблему в чате.":"Не удалось открыть журнал: "+hostLog.Error,11,"#94ABB3");options.Children.Add(logNoteText);
-            var noScreens=Text("Снимки экрана не сохраняются.",10,"#6F8992");noScreens.Margin=new Thickness(0,5,0,0);options.Children.Add(noScreens);
-            var markHint=Text("F9 — отметить проблему; затем опиши её в чате.",10,"#94ABB3");markHint.Margin=new Thickness(0,7,0,0);options.Children.Add(markHint);
-            traceStateText=Text("Боевой журнал: ожидаем подключение.",10,"#6F8992");traceStateText.Margin=new Thickness(0,7,0,0);options.Children.Add(traceStateText);
+            logNoteText=Text(hostLog.Error==null?I18n.Text("Журнал записывается автоматически.\nПосле прогона опиши проблему в чате.","Logs are recorded automatically.\nDescribe any issue after your session."):I18n.Text("Не удалось открыть журнал: ","Could not open the log: ")+hostLog.Error,11,"#94ABB3");options.Children.Add(logNoteText);
+            var noScreens=Text(I18n.Text("Снимки экрана не сохраняются.","Screenshots are not saved."),10,"#6F8992");noScreens.Margin=new Thickness(0,5,0,0);options.Children.Add(noScreens);
+            var markHint=Text(I18n.Text("F9 — отметить проблему; затем опиши её в чате.","F9 — mark an issue, then describe it afterwards."),10,"#94ABB3");markHint.Margin=new Thickness(0,7,0,0);options.Children.Add(markHint);
+            traceStateText=Text(I18n.Text("Боевой журнал: ожидаем подключение.","Combat log: waiting for connection."),10,"#6F8992");traceStateText.Margin=new Thickness(0,7,0,0);options.Children.Add(traceStateText);
             var logPath=Text(hostLog.Folder,9,"#6F8992");logPath.Margin=new Thickness(0,7,0,0);options.Children.Add(logPath);
-            var openLog=Button("Открыть журнал",false);openLog.HorizontalAlignment=HorizontalAlignment.Left;openLog.Padding=new Thickness(11,7,11,7);openLog.FontSize=11;openLog.Margin=new Thickness(0,9,0,0);openLog.Click+=delegate{OpenLogFolder();};options.Children.Add(openLog);
+            var openLog=Button(I18n.Text("Открыть журнал","Open logs"),false);openLog.HorizontalAlignment=HorizontalAlignment.Left;openLog.Padding=new Thickness(11,7,11,7);openLog.FontSize=11;openLog.Margin=new Thickness(0,9,0,0);openLog.Click+=delegate{OpenLogFolder();};options.Children.Add(openLog);
             connectionText=Text("",11,"#81969E");playerText=Text("",11,"#81969E");signalText=Text("",11,"#81969E");threatsValue=Text("—",11,"#C4D1D6");infoText=Text("",10,"#738990");
-            extra.Content=new ScrollViewer{Content=options,MaxHeight=300,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};stack.Children.Add(extra);
+            extra.Content=new ScrollViewer{Content=options,MaxHeight=300,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};statsExpander=extra;WatchLocalized(extra,HeaderedContentControl.HeaderProperty);stack.Children.Add(extra);
 
         }
         private void SavePrefs() {
@@ -848,7 +869,7 @@ namespace ChainedGuard {
         }
         private void OpenLogFolder() {
             try{Directory.CreateDirectory(hostLog.Folder);hostLog.Write("log_folder_opened");Process.Start(new ProcessStartInfo(hostLog.Folder){UseShellExecute=true});}
-            catch(Exception ex){hostLog.Write("log_folder_error","error",ex.Message);logNoteText.Text="Не удалось открыть папку журнала: "+ex.Message;}
+            catch(Exception ex){hostLog.Write("log_folder_error","error",ex.Message);logNoteText.Text=I18n.Text("Не удалось открыть папку журнала: ","Could not open the log folder: ")+ex.Message;}
         }
         private bool GameFocused { get { return game!=null && Native.ForegroundIs(game.Pid); } }
         private IntPtr KeyboardHook(int code,IntPtr wp,IntPtr lp) {
@@ -896,10 +917,10 @@ namespace ChainedGuard {
         }
         private void BeginDiscovery(bool manual) {
             if(preview || closing || discoveryWorking)return;
-            if(anyGameProcess){SetFolderMessage("Игра уже запущена — поиск дисков отложен.");return;}
+            if(anyGameProcess){SetFolderMessage(I18n.Text("Игра уже запущена — поиск дисков отложен.","The game is already running. Disk search is postponed."));return;}
             discoveryAttempted=true;discoveryWorking=true;int epoch=++discoveryEpoch,selection=selectionEpoch;
             var cancel=new CancellationTokenSource();discoveryCancellation=cancel;
-            searchButton.Content="Стоп";SetFolderMessage("Ищем игру на локальных дисках…");
+            searchButton.Content=I18n.Text("Стоп","Stop");SetFolderMessage(I18n.Text("Ищем игру на локальных дисках…","Searching local drives for the game…"));
             var options=new GameDiscovery.Options{SavedFolder=settings.GameFolder,LauncherFolder=root,MayContinue=delegate{return !closing&&!anyGameProcess;}};var retained=installation;
             hostLog.Write("discovery_start","manual",manual);
             var discoveryThread=new Thread(delegate() {
@@ -911,19 +932,19 @@ namespace ChainedGuard {
                     result=GameDiscovery.Discover(options,cancel.Token,delegate(GameDiscovery.Progress progress){
                     Post(delegate{if(closing||epoch!=discoveryEpoch||selection!=selectionEpoch)return;
                         if(progress.Candidate!=null && installation==null)SelectInstallation(progress.Candidate);
-                        else if(installation==null)SetFolderMessage("Поиск: "+(progress.CurrentFolder??progress.Message));
+                        else if(installation==null)SetFolderMessage(I18n.Text("Поиск: ","Searching: ")+(progress.CurrentFolder??I18n.Translate(progress.Message)));
                     });
                 }); }catch(Exception ex){error=ex.Message;}
                 hostLog.Write("discovery_result","found",result==null?0:result.Candidates.Count,"entries",result==null?0:result.EntriesVisited,"cancelled",result!=null&&result.Cancelled,"budget_exceeded",result!=null&&result.BudgetExceeded,"error",error);
                 Post(delegate {
                     if(closing||epoch!=discoveryEpoch)return;
-                    discoveryWorking=false;searchButton.Content="Найти";
+                    discoveryWorking=false;searchButton.Content=I18n.Text("Найти","Find");
                     if(ReferenceEquals(discoveryCancellation,cancel))discoveryCancellation=null;
                     if(selection!=selectionEpoch)return;
                     if(result!=null&&result.Candidates.Count>0)SelectInstallation(result.Candidates[0]);
                     else if(installation!=null)SetFolderMessage(installation.Folder);
-                    else if(anyGameProcess)SetFolderMessage("Игра запущена. Ожидаем подключение…");
-                    else SetFolderMessage(error!=null?"Ошибка поиска. Выбери папку вручную.":(result!=null&&result.Cancelled?"Поиск остановлен. Можно выбрать папку вручную.":"Игра не найдена в пределах поиска. Нажми «Папка…»."));
+                    else if(anyGameProcess)SetFolderMessage(I18n.Text("Игра запущена. Ожидаем подключение…","The game is running. Waiting for connection…"));
+                    else SetFolderMessage(error!=null?I18n.Text("Ошибка поиска. Выбери папку вручную.","Search failed. Select the folder manually."):(result!=null&&result.Cancelled?I18n.Text("Поиск остановлен. Можно выбрать папку вручную.","Search stopped. You can select the folder manually."):I18n.Text("Игра не найдена в пределах поиска. Нажми «Папка…».","The game was not found within the search limits. Click “Folder…”.")));
                 });cancel.Dispose();
             }){IsBackground=true,Priority=ThreadPriority.BelowNormal,Name="Dodger game discovery"};discoveryThread.Start();
         }
@@ -943,11 +964,11 @@ namespace ChainedGuard {
         private sealed class FolderOwner:System.Windows.Forms.IWin32Window {public IntPtr Handle{get;set;}}
         private void ChooseFolder() {
             if(preview||closing)return;
-            using(var picker=new System.Windows.Forms.FolderBrowserDialog{Description="Выбери папку с ChainedBeasts.exe и всей распакованной игрой",ShowNewFolderButton=false}) {
+            using(var picker=new System.Windows.Forms.FolderBrowserDialog{Description=I18n.Text("Выбери папку с ChainedBeasts.exe и всей распакованной игрой","Select the folder containing ChainedBeasts.exe and the extracted game"),ShowNewFolderButton=false}) {
                 if(installation!=null)picker.SelectedPath=installation.Folder;
                 if(picker.ShowDialog(new FolderOwner{Handle=self})!=System.Windows.Forms.DialogResult.OK)return;
                 selectionEpoch++;CancelDiscovery();string folder=picker.SelectedPath;int selection=selectionEpoch;
-                folderButton.IsEnabled=false;SetFolderMessage("Проверяем выбранную папку…");
+                folderButton.IsEnabled=false;SetFolderMessage(I18n.Text("Проверяем выбранную папку…","Checking the selected folder…"));
                 ThreadPool.QueueUserWorkItem(delegate {
                     GameDiscovery.Candidate candidate;string reason;bool valid=InspectFolder(folder,out candidate,out reason);
                     Post(delegate{folderButton.IsEnabled=true;if(selection!=selectionEpoch)return;if(valid)SelectInstallation(candidate);else SetFolderMessage(reason);});
@@ -964,13 +985,13 @@ namespace ChainedGuard {
                     if(!probe.AnyProcess&&!string.IsNullOrEmpty(probe.Diagnostic))throw new InvalidOperationException(probe.Diagnostic);
                     if(!probe.AnyProcess) {
                         GameDiscovery.Candidate validated;string reason;
-                        if(!InspectFolder(candidate==null?saved:candidate.Folder,out validated,out reason))throw new InvalidOperationException(reason+" Нажми «Папка…» или «Найти».");
+                        if(!InspectFolder(candidate==null?saved:candidate.Folder,out validated,out reason))throw new InvalidOperationException(reason+I18n.Text(" Нажми «Папка…» или «Найти»."," Click “Folder…” or “Find”."));
                         if(candidate!=null&&!string.Equals(validated.Store,"Steam",StringComparison.OrdinalIgnoreCase)){validated.Store=candidate.Store;validated.SteamAppId=candidate.SteamAppId;validated.LaunchUri=candidate.LaunchUri;}
                         candidate=validated;
                         // Re-probe immediately before launch to avoid duplicating a game started independently.
                         probe=GameRuntime.Probe();anyGameProcess=probe.AnyProcess;
                         if(!probe.AnyProcess&&!string.IsNullOrEmpty(probe.Diagnostic))throw new InvalidOperationException(probe.Diagnostic);
-                        if(closing||selection!=Volatile.Read(ref selectionEpoch))throw new OperationCanceledException("Запуск отменён.");
+                        if(closing||selection!=Volatile.Read(ref selectionEpoch))throw new OperationCanceledException(I18n.Text("Запуск отменён.","Launch canceled."));
                         if(!probe.AnyProcess){using(var launched=Process.Start(GameLaunch.Plan(candidate))){}started=true;}
                     }
                 }catch(Exception ex){error=ex.Message;}
@@ -982,7 +1003,7 @@ namespace ChainedGuard {
                     if(error!=null){detailText.Text=error;return;}
                     CancelDiscovery();if(selected!=null)SelectInstallation(selected);
                     if(ready!=null&&ready.Selected!=null){if(panel)MinimizePanel("game_selected");Native.SetForegroundWindow(ready.Selected.Window);}
-                    else detailText.Text=didStart?"Игра запускается. Подключимся автоматически…":(ready==null?"Ожидаем игру…":ready.Diagnostic);
+                    else detailText.Text=didStart?I18n.Text("Игра запускается. Подключимся автоматически…","The game is starting. Connecting automatically…"):(ready==null?I18n.Text("Ожидаем игру…","Waiting for the game…"):ready.Diagnostic);
                     lastScan=DateTime.MinValue;Scan(true);
                 });
             });
@@ -991,7 +1012,7 @@ namespace ChainedGuard {
             if(closing)return;
             string hudError=overlay.LastError;
             if(hudError!=lastHudError){hostLog.Write(hudError==null?"hud_renderer_recovered":"hud_renderer_error","error",hudError);lastHudError=hudError;}
-            if(hostLog.Error!=null && logNoteText!=null && !Equals(logNoteText.Tag,hostLog.Error)){logNoteText.Tag=hostLog.Error;logNoteText.Text="Не удалось записать журнал: "+hostLog.Error;}
+            if(hostLog.Error!=null && logNoteText!=null && !Equals(logNoteText.Tag,hostLog.Error)){logNoteText.Tag=hostLog.Error;logNoteText.Text=I18n.Text("Не удалось записать журнал: ","Could not write the log: ")+hostLog.Error;}
             if(!preview && !working && (DateTime.UtcNow-lastScan).TotalSeconds>(channel==null?2:5))Scan(false);
             bool focus=GameFocused;
             bool paused=AutomationPaused(focus);
@@ -1005,7 +1026,7 @@ namespace ChainedGuard {
                     if((DateTime.UtcNow-lastPanelRead).TotalMilliseconds>(panel?120:750)){
                         lastPanelRead=DateTime.UtcNow;var snapshot=channel.Read();if(snapshot!=null)UpdateSnapshot(snapshot,focus);
                     }
-                }catch(Exception ex){hostLog.Write("channel_error","error",ex.Message);Disconnect();detailText.Text="Канал недоступен: "+ex.Message;}
+                }catch(Exception ex){hostLog.Write("channel_error","error",ex.Message);Disconnect();detailText.Text=I18n.Text("Канал недоступен: ","Channel unavailable: ")+ex.Message;}
             }
         }
         private void Scan(bool force) {
@@ -1025,13 +1046,13 @@ namespace ChainedGuard {
                         if(!healthy&&(!same||allowAttempt)) {
                             attempted=true;var selected=probe.Selected;string verifyError;
                             if(!GameRuntime.Verify(selected,out verifyError))throw new InvalidOperationException(verifyError);
-                            if(!string.Equals(Native.Hash(selected.AssemblyPath),ExpectedHash,StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("Эта сборка игры пока не поддерживается: GameAssembly.dll отличается от проверенной версии.");
-                            string dll=Path.Combine(root,"ChainedGuard.Native.dll");if(!File.Exists(dll))throw new FileNotFoundException("Не найден ChainedGuard.Native.dll рядом с Dodger.exe.");
+                            if(!string.Equals(Native.Hash(selected.AssemblyPath),ExpectedHash,StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException(I18n.Text("Эта сборка игры пока не поддерживается: GameAssembly.dll отличается от проверенной версии.","This game build is not supported: GameAssembly.dll differs from the verified build."));
+                            string dll=Path.Combine(root,"ChainedGuard.Native.dll");if(!File.Exists(dll))throw new FileNotFoundException(I18n.Text("Не найден ChainedGuard.Native.dll рядом с Dodger.exe.","ChainedGuard.Native.dll was not found next to Dodger.exe."));
                             dll=NativeFiles.Prepare(dll,HostStorage.BaseFolder,HostStorage.UsesFallback);
                             using(var target=Process.GetProcessById(selected.Pid))foreach(ProcessModule module in target.Modules)if(IsGuardModuleName(module.ModuleName)){reused=true;break;}
                             if(!GameRuntime.Verify(selected,out verifyError))throw new InvalidOperationException(verifyError);
                             next=new Channel(selected.Pid,mark);next.Write(false,false,config.Overlay,true,config,false,config.BlockInvulnerable);
-                            if(closing||epoch!=Volatile.Read(ref connectionEpoch))throw new InvalidOperationException("Подключение отменено.");
+                            if(closing||epoch!=Volatile.Read(ref connectionEpoch))throw new InvalidOperationException(I18n.Text("Подключение отменено.","Connection canceled."));
                             loaded=reused||Native.Inject(selected.Pid,dll,out error);
                             if(!GameRuntime.Verify(selected,out verifyError)){loaded=false;throw new InvalidOperationException(verifyError);}
                             if(!loaded && next!=null){next.Dispose();next=null;}
@@ -1043,11 +1064,11 @@ namespace ChainedGuard {
                 Post(delegate {
                     if(closing||epoch!=connectionEpoch){if(owned!=null)owned.Dispose();working=false;attach.IsEnabled=true;return;}
                     working=false;attach.IsEnabled=true;
-                    if(result==null){detailText.Text=error??"Не удалось проверить игру.";return;}
+                    if(result==null){detailText.Text=error??I18n.Text("Не удалось проверить игру.","Could not check the game.");return;}
                     if(result.Selected==null) {
                         if(!result.AnyProcess&&!string.IsNullOrEmpty(result.Diagnostic)){detailText.Text=result.Diagnostic;return;}
                         if(game!=null)Disconnect();
-                        detailText.Text=result.Diagnostic??"Запусти Chained Beasts — подключимся автоматически.";
+                        detailText.Text=result.Diagnostic??I18n.Text("Запусти Chained Beasts — подключимся автоматически.","Start Chained Beasts to connect automatically.");
                         if(!result.AnyProcess&&!discoveryAttempted)BeginDiscovery(false);return;
                     }
                     bool switched=!GameRuntime.Same(game,result.Selected);
@@ -1055,8 +1076,8 @@ namespace ChainedGuard {
                     else game=result.Selected;
                     if(owned!=null){if(channel!=null)channel.Dispose();channel=owned;lastPanelRead=DateTime.MinValue;}
                     if(healthy){connectFailures=0;return;}
-                    if(loaded){nextConnectAttempt=DateTime.UtcNow.AddSeconds(15);detailText.Text="Модуль загружен. Ожидаем игровой сигнал…";}
-                    else if(attempted){connectFailures++;nextConnectAttempt=DateTime.UtcNow.AddSeconds(RetryDelaySeconds(connectFailures));detailText.Text=error??"Подключение не завершено.";}
+                    if(loaded){nextConnectAttempt=DateTime.UtcNow.AddSeconds(15);detailText.Text=I18n.Text("Модуль загружен. Ожидаем игровой сигнал…","Module loaded. Waiting for a game signal…");}
+                    else if(attempted){connectFailures++;nextConnectAttempt=DateTime.UtcNow.AddSeconds(RetryDelaySeconds(connectFailures));detailText.Text=error??I18n.Text("Подключение не завершено.","Connection did not complete.");}
                     if(installation==null&&runningInstallation!=null)SelectInstallation(runningInstallation);
                 },delegate{if(owned!=null)owned.Dispose();});
             });
@@ -1066,18 +1087,18 @@ namespace ChainedGuard {
             bool player=alive && s.State==2;
             string nativeSignature=alive+"|"+s.State+"|"+s.NativeBuild+"|"+s.NativeRevision+"|"+s.TraceReady+"|"+(s.State==3?s.Status:"");
             if(nativeSignature!=lastNativeSignature){lastNativeSignature=nativeSignature;hostLog.Write("native_state","alive",alive,"state",s.State,"player_found",player,"native_build",s.NativeBuild,"native_revision",s.NativeRevision,"trace_ready",s.TraceReady,"dropped_log_records",s.DroppedLogRecords,"status",s.Status);}
-            connectionText.Text=alive?"●  Подключено":"○  Ожидаем модуль";connectionText.Foreground=Brush(alive?"#C5DDA1":"#94A2A7");
-            playerText.Text=player?"●  Герой найден":"○  Герой не найден";playerText.Foreground=Brush(player?"#C5DDA1":"#94A2A7");
-            signalText.Text=player?(s.Threats>0?"●  Атака рядом":"●  Сигнал активен"):"○  Сигнал не получен";signalText.Foreground=Brush(player?(s.Threats>0?"#F4A087":"#C5DDA1"):"#94A2A7");
-            stateText.Text=s.State==3?"ОШИБКА ПОДКЛЮЧЕНИЯ":(!alive?"ОЖИДАНИЕ ПОДКЛЮЧЕНИЯ":(player?"В ИГРЕ":"ПОДКЛЮЧЕНО"));stateText.Foreground=Brush(s.State==3?"#FFA891":(player?"#D9EAC0":"#BEC9CD"));statePill.Background=Brush(player?"#2D3B29":"#283338");
+            connectionText.Text=alive?I18n.Text("●  Подключено","●  Connected"):I18n.Text("○  Ожидаем модуль","○  Waiting for module");connectionText.Foreground=Brush(alive?"#C5DDA1":"#94A2A7");
+            playerText.Text=player?I18n.Text("●  Герой найден","●  Player found"):I18n.Text("○  Герой не найден","○  Player not found");playerText.Foreground=Brush(player?"#C5DDA1":"#94A2A7");
+            signalText.Text=player?(s.Threats>0?I18n.Text("●  Атака рядом","●  Incoming attack"):I18n.Text("●  Сигнал активен","●  Signal active")):I18n.Text("○  Сигнал не получен","○  No signal received");signalText.Foreground=Brush(player?(s.Threats>0?"#F4A087":"#C5DDA1"):"#94A2A7");
+            stateText.Text=s.State==3?I18n.Text("ОШИБКА ПОДКЛЮЧЕНИЯ","CONNECTION ERROR"):(!alive?I18n.Text("ОЖИДАНИЕ ПОДКЛЮЧЕНИЯ","WAITING FOR CONNECTION"):(player?I18n.Text("В ИГРЕ","IN GAME"):I18n.Text("ПОДКЛЮЧЕНО","CONNECTED")));stateText.Foreground=Brush(s.State==3?"#FFA891":(player?"#D9EAC0":"#BEC9CD"));statePill.Background=Brush(player?"#2D3B29":"#283338");
             if(s.State==3 && !string.IsNullOrWhiteSpace(s.Status))detailText.Text=s.Status;
-            else detailText.Text=alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision)?"Обновление ещё не применено. Полностью закрой и заново запусти игру и Dodger.":(!alive?"Ожидаем ответ игрового модуля.":(player?"Красный контур — угроза. Зелёный сонар — полный блок без урона.":"Подключено. Ожидаем появления героя в бою."));
-            if(alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision)){stateText.Text="ПЕРЕЗАПУСТИ ИГРУ";stateText.Foreground=Brush("#EBC078");statePill.Background=Brush("#403723");}
+            else detailText.Text=alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision)?I18n.Text("Обновление ещё не применено. Полностью закрой и заново запусти игру и Dodger.","The update has not been applied yet. Fully close and restart the game and Dodger."):(!alive?I18n.Text("Ожидаем ответ игрового модуля.","Waiting for the game module."):(player?I18n.Text("Красный контур — угроза. Зелёный сонар — полный блок без урона.","Red outline: incoming threat. Green sonar: a full block without damage."):I18n.Text("Подключено. Ожидаем появления героя в бою.","Connected. Waiting for a player in combat.")));
+            if(alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision)){stateText.Text=I18n.Text("ПЕРЕЗАПУСТИ ИГРУ","RESTART THE GAME");stateText.Foreground=Brush("#EBC078");statePill.Background=Brush("#403723");}
             if(!string.IsNullOrWhiteSpace(s.Info))infoText.Text=s.Info;
             threatsValue.Text=player?s.Threats.ToString():"—";blocksValue.Text=alive?s.Blocks.ToString():"—";dodgesValue.Text=alive?s.Dodges.ToString():"—";
             projectileDodgesValue.Text=alive&&s.NativeBuild>=2?s.ConfirmedProjectileDodges.ToString():"—";
             traceStateText.Text=TraceDescription(alive,s.NativeBuild,s.TraceReady,s.DroppedLogRecords);
-            if(alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision))traceStateText.Text+=" Для последнего исправления защиты перезапустите игру.";
+            if(alive&&NeedsNativeRestart(s.NativeBuild,s.NativeRevision))traceStateText.Text+=I18n.Text(" Для последнего исправления защиты перезапустите игру."," Restart the game to apply the latest defense fix.");
             traceStateText.Foreground=Brush(alive&&(s.NativeBuild<6 || NeedsNativeRestart(s.NativeBuild,s.NativeRevision) || s.TraceReady==2 || s.DroppedLogRecords>0)?"#D4AC75":(alive&&s.TraceReady==1?"#A9C991":"#6F8992"));
             // The native overlay reads the same channel at presentation cadence, independently of this settings timer.
         }
@@ -1101,12 +1122,13 @@ namespace ChainedGuard {
             System.Threading.Volatile.Write(ref hudBinding,null);
             hostLog.Write("disconnected","game_pid",game==null?0:game.Pid);lastNativeSignature=null;
             if(channel!=null){try{channel.Write(false,false,false,true,settings);}catch{};channel.Dispose();channel=null;}
-            game=null;connectionEpoch++;overlay.Dismiss();nextConnectAttempt=DateTime.MinValue;connectFailures=0;connectionText.Text="○  Подключение";playerText.Text="○  Герой";signalText.Text="○  Сигнал атаки";stateText.Text="ОЖИДАНИЕ ИГРЫ";threatsValue.Text=blocksValue.Text=dodgesValue.Text=projectileDodgesValue.Text="—";traceStateText.Text=TraceDescription(false,0,0,0);detailText.Text="Игра закрыта. Ожидаем следующий запуск…";
+            game=null;connectionEpoch++;overlay.Dismiss();nextConnectAttempt=DateTime.MinValue;connectFailures=0;connectionText.Text=I18n.Text("○  Подключение","○  Connection");playerText.Text=I18n.Text("○  Герой","○  Player");signalText.Text=I18n.Text("○  Сигнал атаки","○  Attack signal");stateText.Text=I18n.Text("ОЖИДАНИЕ ИГРЫ","WAITING FOR GAME");threatsValue.Text=blocksValue.Text=dodgesValue.Text=projectileDodgesValue.Text="—";traceStateText.Text=TraceDescription(false,0,0,0);detailText.Text=I18n.Text("Игра закрыта. Ожидаем следующий запуск…","The game closed. Waiting for the next launch…");
         }
         internal static bool HeartbeatAlive(uint now,uint tick) { return unchecked(now-tick)<3000; }
         internal static void CheckPanel(Action<string,bool> check) {
+            string previousLanguage=I18n.Language;
             using(var request=new EventWaitHandle(false,EventResetMode.AutoReset)){
-                var view=new GuardWindow(new StartupOptions(),request,true);
+                var view=new GuardWindow(new StartupOptions(),request,true,"ru");
                 try {
                     check("panel fixture isolates game, hooks, tray and workers",view.overlay==null&&view.channel==null&&view.game==null&&view.timer==null&&view.hook==IntPtr.Zero&&view.tray==null);
                     check("launcher exposes launch folder search and retry",view.launchButton!=null&&view.folderButton!=null&&view.searchButton!=null&&view.attach!=null);
@@ -1120,13 +1142,58 @@ namespace ChainedGuard {
                     var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var file=File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"panel-version"+Branding.Version+".png")))encoder.Save(file);
                     check("panel headless layout fits compact 500px width",element.ActualHeight>300&&element.ActualHeight<750&&element.ActualWidth==500);
                     check("shared panel brushes are cached and frozen",ReferenceEquals(Brush("#81969E"),Brush("#81969E"))&&Brush("#81969E").IsFrozen);
+                    // Language changes update the existing controls; no workers, hooks or game session exist in this fixture.
+                    view.autoBlock.IsChecked=true;view.autoDodge.IsChecked=true;view.priorityDefense.IsChecked=true;view.blockInvulnerable.IsChecked=true;
+                    view.interruptCharged.IsChecked=false;view.showOverlay.IsChecked=false;view.statsExpander.IsExpanded=true;
+                    view.discoveryWorking=true;view.working=true;view.connectionEpoch=17;view.discoveryEpoch=23;view.selectionEpoch=31;
+                    view.Left=123;view.Top=234;double beforeWidth=view.Width;var beforeContent=view.Content;var beforeExpander=view.statsExpander;
+                    var retainedInstallation=new GameDiscovery.Candidate{Folder=@"Q:\Games\Chained Beasts",Store="Direct"};view.installation=retainedInstallation;
+                    using(var testChannel=new Channel(Process.GetCurrentProcess().Id)) {
+                        view.channel=testChannel;view.game=new GameRuntime.Identity{Pid=9876};var beforeGame=view.game;
+                        view.ApplyLanguage("en");
+                        check("language switch preserves automation toggles and expander",view.autoBlock.IsChecked==true&&view.autoDodge.IsChecked==true&&view.priorityDefense.IsChecked==true&&view.blockInvulnerable.IsChecked==true&&view.interruptCharged.IsChecked==false&&view.showOverlay.IsChecked==false&&view.statsExpander.IsExpanded&&ReferenceEquals(beforeExpander,view.statsExpander));
+                        check("language switch retains connection discovery selection and geometry",ReferenceEquals(view.channel,testChannel)&&ReferenceEquals(view.game,beforeGame)&&ReferenceEquals(view.installation,retainedInstallation)&&view.discoveryWorking&&view.working&&view.connectionEpoch==17&&view.discoveryEpoch==23&&view.selectionEpoch==31&&ReferenceEquals(view.Content,beforeContent)&&view.Left==123&&view.Top==234&&view.Width==beforeWidth);
+                        check("active discovery retains Stop action in English",(string)view.searchButton.Content=="Stop");
+                        view.channel=null;view.game=null;
+                    }
+                    check("English labels and tooltips contain no Cyrillic",!HasCyrillicLabels((DependencyObject)view.Content));
+                    view.detailText.Text="Версия игры не поддержана: событие взрыва изменилось";
+                    check("late native Russian fault is translated at UI boundary",view.detailText.Text=="Unsupported game build: explosion event changed");
+                    view.detailText.Text="Не удалось загрузить модуль в игру.";
+                    check("late worker error is translated at UI boundary",view.detailText.Text=="Could not load the module into the game.");
+                    view.folderText.Text=@"R:\Игры\Найти\Chained Beasts";
+                    check("localized UI preserves Cyrillic game paths exactly",view.folderText.Text==@"R:\Игры\Найти\Chained Beasts");
+                    view.ApplyLanguage("ru");
+                    check("active discovery retains Stop action after switching back",(string)view.searchButton.Content=="Стоп"&&view.settings.Language=="ru"&&view.statsExpander.IsExpanded);
+                    view.discoveryWorking=false;view.working=false;view.installation=null;view.statsExpander.IsExpanded=false;
+                    view.autoBlock.IsChecked=false;view.autoDodge.IsChecked=false;view.priorityDefense.IsChecked=false;view.blockInvulnerable.IsChecked=false;view.interruptCharged.IsChecked=true;view.showOverlay.IsChecked=true;
+                    view.detailText.Text=I18n.Text("Запустите Chained Beasts — подключение произойдёт автоматически.","Start Chained Beasts to connect automatically.");
+                    view.SetFolderMessage(I18n.Text("Папка игры будет найдена автоматически.","The game folder will be found automatically."));
+                    foreach(string language in new[]{"ru","en"}) {
+                        view.ApplyLanguage(language);
+                        foreach(var toggle in new[]{view.autoBlock,view.autoDodge,view.priorityDefense,view.blockInvulnerable,view.interruptCharged,view.showOverlay})AnimateToggle(toggle,false);
+                        element.Measure(new Size(500,double.PositiveInfinity));element.Arrange(new Rect(0,0,500,element.DesiredSize.Height));element.UpdateLayout();
+                        var localizedImage=new RenderTargetBitmap(500,(int)Math.Ceiling(element.ActualHeight),96,96,PixelFormats.Pbgra32);localizedImage.Render(element);
+                        var localizedEncoder=new PngBitmapEncoder();localizedEncoder.Frames.Add(BitmapFrame.Create(localizedImage));using(var file=File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"panel-version"+Branding.Version+"-"+language+".png")))localizedEncoder.Save(file);
+                        check(language+" localized compact panel renders at 500px",element.ActualWidth==500&&element.ActualHeight>300&&element.ActualHeight<750);
+                    }
+                    view.ApplyLanguage("ru");
+
                     var steam=new GameDiscovery.Candidate{Folder=@"Q:\SteamLibrary\steamapps\common\Chained Beasts",Store="Steam",SteamAppId="3569420",LaunchUri="steam://rungameid/3569420"};
                     view.SelectInstallation(steam);view.SelectInstallation(new GameDiscovery.Candidate{Folder=steam.Folder,Store="Direct"});
                     check("reselecting same Steam folder preserves verified launch metadata",view.installation.Store=="Steam"&&view.installation.LaunchUri==steam.LaunchUri);
                     view.SelectInstallation(new GameDiscovery.Candidate{Folder=@"R:\Игры\Chained Beasts",Store="Direct"});
                     check("changing to a different folder drops previous Steam metadata",view.installation.Store=="Direct"&&view.installation.LaunchUri==null);
-                }finally{view.hostLog.Dispose();view.Close();}
+                }finally{view.hostLog.Dispose();view.Close();I18n.Language=previousLanguage;}
             }
+        }
+        private static bool HasCyrillicLabels(DependencyObject node) {
+            var text=node as TextBlock;if(text!=null&&Tests.HasCyrillic(text.Text))return true;
+            var control=node as ContentControl;if(control!=null&&control.Content is string&&Tests.HasCyrillic((string)control.Content))return true;
+            var header=node as HeaderedContentControl;if(header!=null&&header.Header is string&&Tests.HasCyrillic((string)header.Header))return true;
+            var element=node as FrameworkElement;if(element!=null&&element.ToolTip is string&&Tests.HasCyrillic((string)element.ToolTip))return true;
+            foreach(object child in LogicalTreeHelper.GetChildren(node)){var dependency=child as DependencyObject;if(dependency!=null&&HasCyrillicLabels(dependency))return true;}
+            return false;
         }
         internal static bool AutomationPaused(bool gameFocused) { return !gameFocused; }
         internal static int RetryDelaySeconds(int failures) { return failures<=1?5:(failures==2?15:30); }
@@ -1138,15 +1205,17 @@ namespace ChainedGuard {
                 (!string.IsNullOrEmpty(name) && name.StartsWith(prefix,StringComparison.OrdinalIgnoreCase) && name.EndsWith(".dll",StringComparison.OrdinalIgnoreCase) && name.Length>prefix.Length+4);
         }
         internal static string TraceDescription(bool alive,uint build,uint ready,uint dropped) {
-            string text=!alive?"Боевой журнал: ожидаем подключение.":(build<2?"Для обновлённого мода и боевого журнала перезапустите игру.":(ready==1?"Боевой журнал включён.":(ready==2?"Ошибка записи боевого журнала.":"Боевой журнал запускается…")));
-            if(alive && build>=2 && build<6)text+=" Для нового индикатора и расчёта защиты перезапустите игру.";
-            return dropped>0?text+" Пропущено записей: "+dropped+".":text;
+            string text=!alive?I18n.Text("Боевой журнал: ожидаем подключение.","Combat log: waiting for connection."):(build<2?I18n.Text("Для обновлённого мода и боевого журнала перезапустите игру.","Restart the game to update the mod and combat log."):(ready==1?I18n.Text("Боевой журнал включён.","Combat log enabled."):(ready==2?I18n.Text("Ошибка записи боевого журнала.","Combat log write error."):I18n.Text("Боевой журнал запускается…","Combat log is starting…"))));
+            if(alive && build>=2 && build<6)text+=I18n.Text(" Для нового индикатора и расчёта защиты перезапустите игру."," Restart the game for the updated indicator and defense calculation.");
+            return dropped>0?text+I18n.Text(" Пропущено записей: "," Dropped records: ")+dropped+".":text;
         }
     }
     internal static class Tests {
         public static int Run() {
+            string previousLanguage=I18n.Language;I18n.Language="ru";try {
             var log=new List<string>();int failed=0;
             Action<string,bool> check=delegate(string name,bool ok){log.Add((ok?"PASS ":"FAIL ")+name);if(!ok)failed++;};
+            CheckLocalization(check);
             check("flags disabled+paused",Channel.Flags(false,false,true,true)==12);
             check("native version restart warning",GuardWindow.NeedsNativeRestart(6,0)&&GuardWindow.NeedsNativeRestart(6,1)&&GuardWindow.NeedsNativeRestart(6,2)&&GuardWindow.NeedsNativeRestart(6,3)&&GuardWindow.NeedsNativeRestart(6,4)&&GuardWindow.NeedsNativeRestart(6,5)&&GuardWindow.NeedsNativeRestart(6,6)&&GuardWindow.NeedsNativeRestart(6,7)&&GuardWindow.NeedsNativeRestart(6,8)&&GuardWindow.NeedsNativeRestart(6,9)&&GuardWindow.NeedsNativeRestart(6,10)&&GuardWindow.NeedsNativeRestart(6,11)&&GuardWindow.NeedsNativeRestart(6,12)&&GuardWindow.NeedsNativeRestart(6,13)&&GuardWindow.NeedsNativeRestart(6,14)&&GuardWindow.NeedsNativeRestart(6,15)&&GuardWindow.NeedsNativeRestart(6,16)&&GuardWindow.NeedsNativeRestart(6,17)&&!GuardWindow.NeedsNativeRestart(6,18)&&!GuardWindow.NeedsNativeRestart(7,0));
             check("flags both actions",Channel.Flags(true,true,true,false)==7);
@@ -1197,6 +1266,34 @@ namespace ChainedGuard {
             }
             log.Add("Result: "+(failed==0?"PASS":"FAIL")+"; failures="+failed+". No game process opened; no injection; no input sent.");
             File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test.txt"),log,Encoding.UTF8);return failed==0?0:2;
+            }finally{I18n.Language=previousLanguage;}
+        }
+        internal static bool HasCyrillic(string value) { if(value==null)return false;foreach(char ch in value)if(ch>='\u0400'&&ch<='\u04ff')return true;return false; }
+        private static void CheckLocalization(Action<string,bool> check) {
+            string previous=I18n.Language;try {
+                check("OS language default is Russian only for Russian cultures",I18n.LanguageForCulture(new CultureInfo("ru-RU"))=="ru"&&I18n.LanguageForCulture(new CultureInfo("en-US"))=="en"&&I18n.LanguageForCulture(new CultureInfo("de-DE"))=="en");
+                check("language values normalize and unsupported values fall back",I18n.Normalize(" EN-us ")=="en"&&I18n.Normalize("Ru-RU")=="ru"&&I18n.Normalize("invalid")==I18n.DefaultLanguage);
+                check("new settings use OS default and legacy settings remain Russian",new Settings().Language==I18n.DefaultLanguage&&Settings.FromXml(new XElement("ChainedGuard")).Language=="ru");
+                var original=new Settings{Language="en-US",Overlay=false,BlockInvulnerable=true,InterruptChargedAttack=false,GameFolder=@"R:\Игры & тест\Chained Beasts"};var loaded=Settings.FromXml(XElement.Parse(original.ToXml().ToString()));
+                check("language XML roundtrip preserves all prior saved settings",loaded.Language=="en"&&!loaded.Overlay&&loaded.BlockInvulnerable&&!loaded.InterruptChargedAttack&&loaded.GameFolder==original.GameFolder);
+                loaded.Language="ru";check("Russian language XML roundtrip",Settings.FromXml(loaded.ToXml()).Language=="ru");
+                I18n.Language="en";
+                check("native faults and composed trace text are English",I18n.Translate("Защита остановлена: ошибка доступа к объекту")=="Defense stopped: object access error"&&!HasCyrillic(I18n.Translate("Боевой журнал включён. Для нового индикатора и расчёта защиты перезапустите игру. Пропущено записей: 4.")));
+                string raw=@"R:\Игры\Найти\Ошибка записи боевого журнала.";
+                check("message translation preserves paths and OS error payloads",I18n.Translate(raw)==raw&&I18n.Translate("Канал недоступен: "+raw)=="Channel unavailable: "+raw&&I18n.Translate("Не удалось открыть папку журнала: Доступ запрещён ОС")=="Could not open the log folder: Доступ запрещён ОС");
+                check("unknown game messages remain verbatim",I18n.Translate("Произвольный текст движка")=="Произвольный текст движка");
+                check("native formatted diagnostics translate without changing values",I18n.Translate("Мод в игре | щит: есть | защита: пауза | кадры: 12345")=="Module in game | shield: yes | defense: paused | frames: 12345");
+                I18n.Language="ru";string oldError=new ArgumentException(I18n.Text("Проверяем выбранную папку…","Checking the selected folder…"),"candidate").Message;
+                I18n.Language="en";int payloadStart=oldError.IndexOf('\n');string translatedError=I18n.Translate(oldError);
+                check("late ArgumentException message translates only known app prefix",translatedError.StartsWith("Checking the selected folder…",StringComparison.Ordinal)&&payloadStart>=0&&translatedError.Substring(translatedError.IndexOf('\n'))==oldError.Substring(payloadStart));
+                check("stale search progress translates exact message but preserves path",I18n.Translate("Поиск: Проверяем выбранную папку…")=="Searching: Checking the selected folder…"&&I18n.Translate("Поиск: "+raw)=="Searching: "+raw);
+
+                var fallback=new HostStorage.Location(@"Q:\fixture",true,true);string enDiagnostic=fallback.Diagnostic;
+                GameDiscovery.Candidate candidate;string reason;GameDiscovery.ValidateFolder(null,out candidate,out reason);
+                check("helper validation errors and storage fallback follow English locale",!HasCyrillic(reason)&&!HasCyrillic(enDiagnostic));
+                I18n.Language="ru";check("storage fallback language updates after initialization",HasCyrillic(fallback.Diagnostic)&&fallback.Diagnostic!=enDiagnostic);
+                int failures=0;var threads=new Thread[4];for(int i=0;i<threads.Length;i++){threads[i]=new Thread(delegate(){try{for(int j=0;j<100;j++){string text=I18n.Text("Тест потока","Thread test");if(text!="Тест потока"&&text!="Thread test")Interlocked.Increment(ref failures);}}catch{Interlocked.Increment(ref failures);}});threads[i].Start();}foreach(var thread in threads)thread.Join();check("localization registration and worker reads are thread safe",failures==0);
+            }finally{I18n.Language=previous;}
         }
         private static void CheckLogger(Action<string,bool> check) {
             string work=Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"..","..","work"));

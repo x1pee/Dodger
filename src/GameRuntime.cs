@@ -27,8 +27,8 @@ namespace ChainedGuard {
         private const string ProcessName="ChainedBeasts";
         private const string ExecutableName="ChainedBeasts.exe";
         private const string AssemblyName="GameAssembly.dll";
-        private const string AccessDeniedMessage="Нет доступа к процессу Chained Beasts. Запустите Dodger с теми же правами, что и игру.";
-        private const string ChangedMessage="Игровой процесс изменился или ещё не готов. Ожидаем повторного подключения.";
+        private static string AccessDeniedMessage { get { return I18n.Text("Нет доступа к процессу Chained Beasts. Запустите Dodger с теми же правами, что и игру.","Cannot access the Chained Beasts process. Run Dodger with the same privileges as the game."); } }
+        private static string ChangedMessage { get { return I18n.Text("Игровой процесс изменился или ещё не готов. Ожидаем повторного подключения.","The game process changed or is not ready yet. Waiting to reconnect."); } }
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
@@ -82,7 +82,7 @@ namespace ChainedGuard {
                 Selected=selected,
                 AnyProcess=anyProcess||selected!=null,
                 Diagnostic=selected!=null?null:(accessDenied?AccessDeniedMessage:
-                    (anyProcess?"Chained Beasts запускается. Ожидаем готовое игровое окно и движок.":null))
+                    (anyProcess?I18n.Text("Chained Beasts запускается. Ожидаем готовое игровое окно и движок.","Chained Beasts is starting. Waiting for its window and engine."):null))
             };
         }
 
@@ -127,7 +127,7 @@ namespace ChainedGuard {
                 return Complete(candidates,anyProcess,accessDenied);
             }catch(Exception error) {
                 var result=Complete(candidates,anyProcess,accessDenied||IsAccessDenied(error));
-                if(result.Selected==null&&result.Diagnostic==null)result.Diagnostic="Не удалось проверить процесс Chained Beasts: "+error.Message;
+                if(result.Selected==null&&result.Diagnostic==null)result.Diagnostic=I18n.Text("Не удалось проверить процесс Chained Beasts: ","Could not inspect the Chained Beasts process: ")+error.Message;
                 return result;
             }finally {
                 if(processes!=null)foreach(Process process in processes)if(process!=null)process.Dispose();

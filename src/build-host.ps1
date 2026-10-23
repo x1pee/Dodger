@@ -1,4 +1,4 @@
-param([string]$OutputName = 'Dodger.exe')
+﻿param([string]$OutputName = 'Dodger.exe')
 $ErrorActionPreference = 'Stop'
 $guardRoot = Split-Path -Parent $PSScriptRoot
 $guardFramework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
@@ -18,7 +18,7 @@ $guardArgs += '/resource:' + $guardIcon + ',Dodger.Icon'
 $guardArgs += '/win32manifest:' + (Join-Path $PSScriptRoot 'Dodger.manifest')
 foreach ($guardReference in $guardReferences) { $guardArgs += '/reference:' + $guardReference }
 $guardArgs += Join-Path $PSScriptRoot 'Host.cs'
-foreach ($guardSource in @('GameDiscovery.cs','GameRuntime.cs','GameLaunch.cs','HostStorage.cs','NativeFiles.cs','AssemblyInfo.cs')) { $guardArgs += Join-Path $PSScriptRoot $guardSource }
+foreach ($guardSource in @('I18n.cs','GameDiscovery.cs','GameRuntime.cs','GameLaunch.cs','HostStorage.cs','NativeFiles.cs','AssemblyInfo.cs')) { $guardArgs += Join-Path $PSScriptRoot $guardSource }
 & $guardCompiler $guardArgs
 if ($LASTEXITCODE -ne 0) { throw 'C# compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Dodger.config') -Destination ((Join-Path $guardRoot $OutputName) + '.config')

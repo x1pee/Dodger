@@ -10,7 +10,7 @@ namespace ChainedGuard {
         private const string SteamPrefix="steam://rungameid/";
 
         private static ArgumentException InvalidPath() {
-            return new ArgumentException("Выбери полностью распакованную папку игры с ChainedBeasts.exe.","candidate");
+            return new ArgumentException(I18n.Text("Выбери полностью распакованную папку игры с ChainedBeasts.exe.","Select the fully extracted game folder containing ChainedBeasts.exe."),"candidate");
         }
 
         private static string AbsoluteLocalPath(string path) {
@@ -61,7 +61,7 @@ namespace ChainedGuard {
         }
 
         private static ArgumentException InvalidSteamUri() {
-            return new ArgumentException("Ссылка запуска Steam не распознана. Повтори поиск папки игры.","candidate");
+            return new ArgumentException(I18n.Text("Ссылка запуска Steam не распознана. Повтори поиск папки игры.","The Steam launch link was not recognized. Find the game folder again."),"candidate");
         }
     }
 }

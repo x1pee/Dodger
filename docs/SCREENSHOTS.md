@@ -2,9 +2,11 @@
 
 ## Desktop panel
 
-The version 18 WPF panel, exported from the application's own renderer in its disconnected state.
+The version 19 WPF panel in English and Russian, exported from the application's own renderer in its disconnected state.
 
 ![Dodger desktop panel](media/panel.png)
+
+![Dodger desktop panel in Russian](media/panel-ru.png)
 
 ## In-game HUD
 
